@@ -16,6 +16,7 @@
     "@humanos/policy": "workspace:*",
     "@humanos/world": "workspace:*",
     "@humanos/models": "workspace:*",
+    "@humanos/workflows": "workspace:*",
     "@humanos/tools": "workspace:*",
     "hono": "4.13.8",
     "@hono/node-server": "1.19.15",

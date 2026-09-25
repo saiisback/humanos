@@ -106,6 +106,9 @@ importers:
       '@humanos/tools':
         specifier: workspace:*
         version: link:../../packages/tools
+      '@humanos/workflows':
+        specifier: workspace:*
+        version: link:../../packages/workflows
       '@humanos/world':
         specifier: workspace:*
         version: link:../../packages/world
