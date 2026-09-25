@@ -79,3 +79,13 @@ At this follow-up stage the suite contained 40 cases, while the prior full recor
 
 - [Mobile verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-mobile/video.webm)
 - [Desktop verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-desktop/video.webm)
+
+## Post-journal final acceptance rerun
+
+After the durable ENS journal, final API restart, source-only test discovery and production rebuild, the lead reran the complete suite:
+
+```sh
+HUMANOS_LIVE_API=1 HUMANOS_RECORD=1 HUMANOS_RECORD_DIR=/Users/saikarthik/.codex/artifacts/humanos-final-acceptance-20260924 pnpm test:e2e
+```
+
+Result:40 passed in1.4minutes,0 failures,0 skips. Output is captured in `/tmp/humanos-e2e-final.log`; WebMs remain in the new artifact directory. This preserves all prior captures. Provider-fixture boundaries described above remain unchanged; journal correctness is separately covered by real PostgreSQL/Anvil tests.

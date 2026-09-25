@@ -50,4 +50,3 @@ The judge creates a HumanOS root, starts an application mission, reviews the gen
 ## Deployment
 
 Use a pnpm TypeScript monorepo. Deploy the web UI and API publicly, run Flue on a supported Node or Cloudflare target, persist durable data in Postgres, and deploy ENSv2 integration contracts to Sepolia. All qualification-critical integrations must be real; the application submission endpoint may be owned by this repository but must persist data and enforce authorization.
-

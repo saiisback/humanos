@@ -63,11 +63,13 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 1: Repository foundation and frozen contracts
 
 **Files:**
+
 - Create: `pnpm-workspace.yaml`, `package.json`, `tsconfig.base.json`, `.env.example`, `.gitignore`
 - Create: `packages/schemas/src/domain.ts`, `packages/schemas/src/events.ts`, `packages/schemas/src/canonicalize.ts`
 - Test: `packages/schemas/test/canonicalize.test.ts`
 
 **Interfaces:**
+
 - Produces `Mission`, `ActionProposal`, `Approval`, `ExecutionReceipt`, `AuditEvent`, `Capability`, `RiskLevel`, and `MissionState` schemas.
 - Produces `canonicalize(value): string` and `hashCanonical(value): Hex`.
 
@@ -80,10 +82,12 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 2: Deterministic state machine and policy engine
 
 **Files:**
+
 - Create: `packages/policy/src/state-machine.ts`, `risk.ts`, `capabilities.ts`, `decision.ts`, `errors.ts`
 - Test: `packages/policy/test/state-machine.test.ts`, `risk.test.ts`, `capabilities.test.ts`, `decision.test.ts`
 
 **Interfaces:**
+
 - Consumes domain schemas from Task 1.
 - Produces `transition(state, event)`, `classifyStatic(action)`, `effectiveCapabilities(input)`, and `authorize(input): PolicyDecision`.
 
@@ -97,11 +101,13 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 3: Persistence, locking, idempotency, and audit
 
 **Files:**
+
 - Create: `packages/database/src/schema.ts`, `repositories/*.ts`, `transactions/execute-action.ts`
 - Create: `packages/database/migrations/0001_initial.sql`
 - Test: `packages/database/test/execution-transaction.test.ts`
 
 **Interfaces:**
+
 - Produces repositories for roots, missions, agent identities, actions, approvals, receipts, nullifiers, and audit events.
 - Produces `withLockedAction(actionId, callback)` and unique idempotency constraints.
 
@@ -114,10 +120,12 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 4: DeepSeek V4.1 Flash adapter
 
 **Files:**
+
 - Create: `packages/models/src/deepseek/client.ts`, `provider.ts`, `schemas.ts`
 - Test: `packages/models/test/deepseek.test.ts`
 
 **Interfaces:**
+
 - Produces `proposeMission(input): MissionProposal` and `proposeNextAction(input): ActionProposalDraft`.
 - Uses official DeepSeek OpenAI-compatible API with model `deepseek-flash`.
 
@@ -130,11 +138,13 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 5: Jev decision adapter and calibration harness
 
 **Files:**
+
 - Create: `packages/models/src/jev/client.ts`, `questions.ts`, `policy-map.ts`
 - Create: `packages/models/evals/humanos-actions.jsonl`, `scripts/calibrate-jev.ts`
 - Test: `packages/models/test/jev.test.ts`, `jev-policy-map.test.ts`
 
 **Interfaces:**
+
 - Produces `evaluateAction(state): JevAssessment` with typed Choice/Noul/Score results.
 - Produces deterministic `applyJevThresholds(assessment): AssessmentFlags`.
 
@@ -149,11 +159,13 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 6: World IDKit root establishment
 
 **Files:**
+
 - Create: `packages/world/src/idkit/sign-request.ts`, `verify-proof.ts`, `nullifier.ts`
 - Create: `apps/api/src/routes/world/idkit-sign.ts`, `idkit-verify.ts`
 - Test: `packages/world/test/idkit.test.ts`
 
 **Interfaces:**
+
 - Produces `createSignedProofRequest(action, signal)` and `verifyRootProof(payload)`.
 
 - [ ] Register the event app and record non-secret IDs in typed configuration.
@@ -165,12 +177,14 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 7: ENSv2 identity and permissions
 
 **Files:**
+
 - Create: `packages/contracts/src/HumanOSRegistrar.sol`, `script/Deploy.s.sol`
 - Create: `packages/contracts/test/HumanOSRegistrar.t.sol`
 - Create: `packages/ens/src/register.ts`, `roles.ts`, `resolve.ts`, `authorize.ts`
 - Test: `packages/ens/test/authorize.test.ts`
 
 **Interfaces:**
+
 - Produces root/task subname registration, scoped resolver record grants, revocation, expiry queries, and `readAgentAuthorization(name)`.
 
 - [ ] Read deployed ENSv2 Sepolia addresses and current ABIs from official docs; store verified deployment metadata.
@@ -184,11 +198,13 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 8: World ID for Agents sensitive approval
 
 **Files:**
+
 - Create: `packages/world/src/agents/request.ts`, `verify.ts`, `approval-binding.ts`
 - Create: `apps/api/src/routes/world/agent-approval.ts`
 - Test: `packages/world/test/agent-approval.test.ts`
 
 **Interfaces:**
+
 - Produces `requestFreshApproval(action)` and `verifyAndStoreApproval(result, expectedAction)`.
 
 - [ ] Read event-environment docs and obtain required credentials before implementation.
@@ -200,10 +216,12 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 9: Flue durable HumanOS runtime
 
 **Files:**
+
 - Create: `apps/agent/src/agents/humanos.ts`, `hooks/use-mission.ts`, `hooks/use-capabilities.ts`, `app.ts`, `flue.config.ts`
 - Test: `apps/agent/test/humanos.test.ts`, `recovery.test.ts`
 
 **Interfaces:**
+
 - Consumes model adapters, policy decisions, repositories, and tools.
 - Exposes protected durable conversation routes and mission dispatch APIs.
 
@@ -217,11 +235,13 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 10: Policy-gated tools and protected demo service
 
 **Files:**
+
 - Create: `packages/tools/src/gateway.ts`, `documents.ts`, `application.ts`, `calendar.ts`
 - Create: `apps/demo-service/src/app.ts`, `store.ts`
 - Test: `packages/tools/test/gateway.test.ts`, `apps/demo-service/test/submission.test.ts`
 
 **Interfaces:**
+
 - Produces idempotent tools for approved document reads, draft persistence, application submission, and calendar creation.
 
 - [ ] Write failing tests proving every tool reauthorizes independently and model-provided parameters cannot bypass constraints.
@@ -233,10 +253,12 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 11: Atomic sensitive execution pipeline
 
 **Files:**
+
 - Create: `apps/api/src/services/execute-sensitive-action.ts`
 - Test: `apps/api/test/execute-sensitive-action.test.ts`
 
 **Interfaces:**
+
 - Produces `executeSensitiveAction(actionId): ExecutionReceipt`.
 
 - [ ] Write failing race tests for simultaneous execution, approval consumption, revocation during execution, stale ENS reads, and retry after upstream timeout.
@@ -247,10 +269,12 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 12: Product UI and judge journeys
 
 **Files:**
+
 - Create: `apps/web/app/**`, `apps/web/components/**`, `apps/web/lib/api.ts`
 - Test: `tests/e2e/success.spec.ts`, `denied.spec.ts`, `revoked.spec.ts`, `recovery.spec.ts`
 
 **Interfaces:**
+
 - Consumes typed API/Flue clients and exposes onboarding, mission, timeline, approval, ENS, receipt, expiry, and revoke flows.
 
 - [ ] Build the responsive onboarding and wallet/World verification flow.
@@ -263,10 +287,12 @@ No two workers may edit the same package concurrently. Each delegation must retu
 ### Task 13: Deployment, security validation, and submission package
 
 **Files:**
+
 - Create: `docker-compose.yml`, deployment configs, `docs/architecture.md`, `docs/threat-model.md`, `docs/demo-script.md`, `docs/deployment.md`, `docs/integration-debrief.md`
 - Modify: `README.md`, `.env.example`
 
 **Interfaces:**
+
 - Produces the public demo, reproducible setup, evidence, and hackathon submission material.
 
 - [ ] Deploy Postgres, API, Flue runtime, demo service, and web application with secrets in platform secret storage.
@@ -302,7 +328,7 @@ No two workers may edit the same package concurrently. Each delegation must retu
 
 ## Execution progress — 2026-09-24
 
-This ledger distinguishes implemented/local-tested work from live qualification. Original deployment/provisioning checkboxes remain unchecked until evidence exists.
+This ledger is the implementation progress record; the original task lists above are preserved as the plan. Local implementation is distinguished from live qualification. Deployment/provisioning remains incomplete until real evidence exists.
 
 - [x] Task 1: frozen schemas/canonicalization/tooling; 20 tests, commit104f30f.
 - [x] Task 2: deterministic policy, exhaustive transitions and fail-closed tests; commitb66783c.
@@ -310,13 +336,13 @@ This ledger distinguishes implemented/local-tested work from live qualification.
 - [x] Task 4: strict DeepSeek deepseek-flash adapter and contract tests, commit5af12cb. Live API call awaits key.
 - [x] Task 5: pinned Jev1.13 adapter, typed questions,9-case synthetic calibration and adversarial tests, commit5af12cb. Live calibration remains pending.
 - [x] Task 6: real IDKit4 UI/signing/verification implementation and replay-safe database flow. Live root proof awaits World app credentials.
-- [ ] Task 7: Claude Code contracts/ENS adapter under independent review; Sepolia deployment awaits parent name/funded wallet.
+- [x] Task 7 local implementation: official ENSv2 contracts, strict authorization, scoped roles, exact retries and durable signed-transaction journal;48 ENS and26 Foundry tests. Commits85fe85f/b29c698/e85caab. Sepolia deployment still awaits parent/funded wallet.
 - [x] Task 8: exact payload signal/nonce bound same-human approvals, single-use challenge/approval checks. Official HITL protocol adaptation implemented; live proof and organizer qualification pending.
 - [x] Task 9: Flue2 runtime, protected routes, PostgreSQL storage, actual runtime start/stop/restart test with fixture model transport, production boot smoke; commit9e54c09.
-- [x] Task 10: signed persistent application/calendar service, per-call policy gateway, approved document/draft boundaries; tests pass. Calendar is the explicit development integration.
-- [x] Task 11: locked execution, single-use approval, current authorization, idempotent effects, timeout reconciliation/audit, optional ENS receipt callback; commit3b8c62d plus integration pending.
-- [x] Task 12: responsive frontend, real local API/PostgreSQL browser journeys and UI/accessibility fixtures; commits5ab3284/e7b219b. Additional recovery fixes under test.
-- [ ] Task 13: final full verification/security review and credentialed deployment evidence pending. Deployment docs/configs created; no public URL or HumanOS Sepolia deployment claimed.
+- [x] Task 10: signed persistent application/calendar service, per-call policy gateway, approved document/draft library boundaries; tests pass. The current runtime mounts only prepare_next_action; document upload/read UI is not implemented. Calendar is the explicit development integration.
+- [x] Task 11: locked execution, single-use approval, current authorization, idempotent effects, timeout reconciliation/audit, idempotent finalized ENS receipt publication wired to the real adapter; commits3b8c62d/9ade436/31f6870.
+- [x] Task 12: responsive frontend, real local API/PostgreSQL browser journeys and UI/accessibility fixtures; commits5ab3284/e7b219b. Reconciliation, challenge refresh, receipt retry, and verified cancellation regressions pass;40 browser cases exist with recordings.
+- [ ] Task 13 live acceptance: local full verification, independent security review, recordings and deployment documentation are prepared; public full-stack deployment and live sponsor evidence remain blocked. No public demo URL or HumanOS Sepolia deployment is claimed.
 
 Ruling: parallel workers use disjoint owned paths in the requested workspace, overriding the skill's generic sequential-implementation default — user explicitly requests aggressive parallel implementation — incorrect boundaries would risk merge conflicts; final integration/review gates remain required.
 
@@ -325,3 +351,7 @@ Ruling: World fresh approvals retain the registered humanos-root action and use 
 Ruling: adapt the official World HITL signing/verification protocol to Flue instead of introducing the Workflow SDK runtime — the specification permits only Flue as the agent framework — organizer prize qualification remains unverified and could require an official framework-neutral integration.
 
 Ruling: use a repository-owned persistent development calendar service — the plan explicitly calls for a development calendar integration — this does not create a third-party calendar event.
+
+Final review through e85caab: no unresolved actionable critical/high finding in reviewed paths. Durable ENS journal commits signed bytes before broadcasting, retains exact nonce/hash through ambiguity and restart, and prevents repeated initial top-ups. A separate ENS database pool avoids nested connection starvation. See docs/verification.md for the final aggregate commands and evidence.
+
+Final local verification:335 unique TypeScript tests,26 Foundry tests and40 recorded browser tests passed. Formatting, lint, typechecking, builds, scans and dependency audit passed. Public source: https://github.com/saiisback/humanos . Full-stack deployment and live sponsor qualification remain blocked as documented.
