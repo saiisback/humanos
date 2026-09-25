@@ -12,6 +12,7 @@ import type {
 import { api } from "../lib/api";
 import { useAuth } from "./auth/use-auth";
 import { getBrowserJawProvider } from "./auth/jaw";
+import { createE2EJawPermissionProvider } from "./auth/e2e-jaw";
 import { createJawPermissionClient } from "./permissions/jaw-permissions";
 import { Composer } from "./chat/composer";
 import { buildTranscript } from "./chat/mission-flow";
@@ -33,7 +34,13 @@ function App() {
   const [ready, setReady] = useState<Readiness | null>(null);
   const [missions, setMissions] = useState<Mission[]>([]);
   const [detail, setDetail] = useState<MissionDetailResponse | null>(null);
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(() => {
+    try {
+      return sessionStorage.getItem("humanos:conversation-draft") ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [caps, setCaps] = useState<Capability[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -91,6 +98,13 @@ function App() {
   useEffect(() => {
     void perform(refresh).finally(() => setLoading(false));
   }, []);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("humanos:conversation-draft", goal);
+    } catch {
+      // Private storage failure does not prevent composing a task.
+    }
+  }, [goal]);
   useEffect(() => {
     if (!auth.root) {
       setMissions([]);
@@ -177,7 +191,10 @@ function App() {
       void perform(() => actionMutation(actionId, "execute", true)),
   };
   const transcript = buildTranscript(detail, ready);
-  const jawProvider = getBrowserJawProvider();
+  const jawProvider =
+    import.meta.env.MODE === "e2e"
+      ? createE2EJawPermissionProvider()
+      : getBrowserJawProvider();
   const permissionClient =
     jawProvider && auth.account
       ? createJawPermissionClient(
@@ -220,7 +237,12 @@ function App() {
         root={auth.root}
         account={auth.account}
         readiness={ready}
-        onSignOut={() => void perform(auth.signOut)}
+        onSignOut={() =>
+          void perform(async () => {
+            await auth.signOut();
+            setGoal("");
+          })
+        }
         busy={busy}
         error={error}
         onRetry={() =>

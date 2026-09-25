@@ -1,17 +1,22 @@
 import { test, expect } from "@playwright/test";
-import { fixture, createAndRun } from "./fixtures";
+import { fixture, createAndRun, verifySyntheticAction } from "./fixtures";
 test("HTTP fixture: mission mandate, ENS, separate assessments and receipt", async ({
   page,
 }) => {
   await fixture(page);
   await createAndRun(page);
-  await expect(page.getByText("task.human.eth", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "ENS identity" })
+      .getByText("task.human.eth", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Jev assessment" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "HumanOS policy" }),
   ).toBeVisible();
+  await verifySyntheticAction(page);
   await page.getByRole("button", { name: "Execute approved action" }).click();
   await expect(page.getByText("Execution receipt · succeeded")).toBeVisible();
   await expect(
@@ -23,6 +28,18 @@ test("HTTP fixture: unavailable World does not manufacture approval", async ({
 }) => {
   await fixture(page);
   await createAndRun(page);
+  await page.route("**/api/actions/action-fixture/approval/request", (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        error: {
+          code: "INTEGRATION_UNAVAILABLE",
+          message:
+            "World integration is unavailable. Configure credentials to verify.",
+        },
+      },
+    }),
+  );
   await page.getByRole("button", { name: "Verify sensitive action" }).click();
   await expect(page.getByRole("alert")).toContainText(
     "World integration is unavailable",
@@ -35,6 +52,7 @@ test("HTTP fixture: successful execution shows pending ENS publication and retri
 }) => {
   const data = await fixture(page);
   await createAndRun(page);
+  await verifySyntheticAction(page);
   let calls = 0;
   await page.route("**/api/actions/action-fixture/execute", async (route) => {
     calls++;

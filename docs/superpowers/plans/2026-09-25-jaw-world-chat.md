@@ -90,6 +90,7 @@
 ### Task 1: Account, binding and permission contracts
 
 **Files:**
+
 - Modify: `packages/schemas/src/domain.ts`
 - Modify: `packages/schemas/src/api.ts`
 - Modify: `packages/database/src/schema.ts`
@@ -98,6 +99,7 @@
 - Create: `packages/database/test/account-binding.test.ts`
 
 **Interfaces:**
+
 - Produces: `WalletAccount`, `RootAccountBinding`, `JawPermissionGrant`, `AuthSessionResponse`, `CreateSiweChallengeResponse`, `VerifySiweRequest`.
 - Produces: `Transaction.bindRootAccount(rootId: string, accountId: string, now: Date): Promise<RootAccountBinding>`.
 - Changes: `SessionRecord.rootId` becomes nullable and adds non-null `accountId` for new JAW sessions; legacy test records are upgraded in their fixtures.
@@ -166,6 +168,7 @@ git commit -m "feat(auth): add wallet account and root binding records"
 ### Task 2: Server-side JAW SIWE authentication
 
 **Files:**
+
 - Create: `apps/api/src/services/siwe.ts`
 - Create: `apps/api/test/siwe-auth.test.ts`
 - Modify: `apps/api/src/app.ts`
@@ -174,6 +177,7 @@ git commit -m "feat(auth): add wallet account and root binding records"
 - Modify: `pnpm-lock.yaml`
 
 **Interfaces:**
+
 - Consumes: Task 1 auth schemas and account/session tables.
 - Produces: `SiweVerifier.verify(input): Promise<{ address: Address; chainId: number }>`.
 - Produces routes: `POST /api/auth/siwe/nonce`, `POST /api/auth/siwe/verify`, `POST /api/auth/logout`, `GET /api/auth/session`.
@@ -222,12 +226,14 @@ git commit -m "feat(auth): authenticate JAW accounts with SIWE"
 ### Task 3: Bind PoH roots to authenticated accounts
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts`
 - Modify: `apps/api/test/auth.test.ts`
 - Create: `apps/api/test/root-binding.test.ts`
 - Modify: `packages/world/test/verification.test.ts`
 
 **Interfaces:**
+
 - Consumes: account-bound `SessionRecord` and `bindRootAccount`.
 - Changes: `/api/world/root/request` requires a valid JAW session and binds the challenge to `session.id` plus `accountId`.
 - Changes: `/api/world/root/verify` returns `AuthSessionResponse` and upgrades the same session with `rootId`.
@@ -270,12 +276,14 @@ git commit -m "feat(identity): bind World roots to JAW accounts"
 ### Task 4: Make the JAW account the new ENS root owner
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts`
 - Modify: `apps/api/test/root-binding.test.ts`
 - Modify: `packages/ens/src/adapter.ts`
 - Modify: `packages/ens/test/authorize.test.ts`
 
 **Interfaces:**
+
 - Changes: `EnsAdapter.register(mission, rootOwner)` requires a checksummed/lowercase-normalized EVM address.
 - Changes: `createHumanOSEnsAdapter.register` uses the passed `rootOwner`; no production call silently substitutes the operator.
 
@@ -309,6 +317,7 @@ git commit -m "feat(ens): assign new roots to JAW accounts"
 ### Task 5: JAW browser adapter and sign-in experience
 
 **Files:**
+
 - Modify: `apps/web/package.json`
 - Modify: `pnpm-lock.yaml`
 - Create: `apps/web/src/auth/jaw.ts`
@@ -318,6 +327,7 @@ git commit -m "feat(ens): assign new roots to JAW accounts"
 - Modify: `.env.example`
 
 **Interfaces:**
+
 - Consumes: Task 2 auth routes/contracts.
 - Produces: `JawAuthClient.connect(challenge): Promise<{ message; signature }>` and `disconnect(): Promise<void>`.
 - Produces: `useAuth()` state `{ status, account, root, jawConfigured, signIn, signOut, refresh }`.
@@ -329,10 +339,20 @@ Inject an EIP-1193 provider and assert `connect` calls:
 ```ts
 provider.request({
   method: "wallet_connect",
-  params: [{ capabilities: { signInWithEthereum: {
-    nonce, chainId: "0xaa36a7", domain, uri, statement,
-    expirationTime: expiresAt,
-  }}}],
+  params: [
+    {
+      capabilities: {
+        signInWithEthereum: {
+          nonce,
+          chainId: "0xaa36a7",
+          domain,
+          uri,
+          statement,
+          expirationTime: expiresAt,
+        },
+      },
+    },
+  ],
 });
 ```
 
@@ -368,6 +388,7 @@ git commit -m "feat(web): sign in with JAW passkeys"
 ### Task 6: Generate and implement the responsive chat interface
 
 **Files:**
+
 - Create: generated mobile and desktop visual references through the image-generation workflow.
 - Create: `apps/web/src/chat/types.ts`
 - Create: `apps/web/src/chat/mission-flow.ts`
@@ -382,6 +403,7 @@ git commit -m "feat(web): sign in with JAW passkeys"
 - Add: `apps/web/src/chat/mission-flow.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 2-5 session/auth flows and existing mission/action endpoints.
 - Produces: `buildTranscript(detail, readiness): TranscriptItem[]` where the discriminated union covers human, agent, progress, identity, mandate, ENS, approval, denial and receipt items.
 
@@ -429,6 +451,7 @@ git commit -m "feat(web): replace dashboard with responsive agent chat"
 ### Task 7: JAW permission review, record and revoke
 
 **Files:**
+
 - Create: `apps/web/src/permissions/jaw-permissions.ts`
 - Create: `apps/web/src/permissions/jaw-permissions.test.ts`
 - Create: `apps/web/src/permissions/permission-review.tsx`
@@ -437,6 +460,7 @@ git commit -m "feat(web): replace dashboard with responsive agent chat"
 - Create: `apps/api/test/jaw-permissions.test.ts`
 
 **Interfaces:**
+
 - Produces client methods `grant(reviewed)`, `list()`, `revoke(permissionId)` wrapping `wallet_grantPermissions`, `wallet_getPermissions` and `wallet_revokePermissions`.
 - Produces backend routes `GET /api/jaw/permissions`, `POST /api/jaw/permissions/record`, `POST /api/jaw/permissions/:id/revoke`.
 
@@ -478,6 +502,7 @@ git commit -m "feat(permissions): review and track JAW grants"
 ### Task 8: Responsive browser journeys and final verification
 
 **Files:**
+
 - Modify: `tests/e2e/fixtures.ts`
 - Modify: `tests/e2e/success.spec.ts`
 - Modify: `tests/e2e/denied.spec.ts`
@@ -493,6 +518,7 @@ git commit -m "feat(permissions): review and track JAW grants"
 - Modify: `docs/verification.md`
 
 **Interfaces:**
+
 - Consumes the completed application; produces evidence only.
 
 - [ ] **Step 1: Update fixtures and write failing end-to-end assertions**
@@ -502,8 +528,12 @@ Fixture the new `/api/auth/session`, SIWE and account-bound World paths. Add jou
 For layout, assert at 320x700, iPhone 13 and Desktop Chrome:
 
 ```ts
-expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-await expect(page.getByRole("textbox", { name: /task|message/i })).toBeInViewport();
+expect(
+  await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+).toBe(true);
+await expect(
+  page.getByRole("textbox", { name: /task|message/i }),
+).toBeInViewport();
 await expect(page.getByRole("main")).toBeVisible();
 ```
 
@@ -555,10 +585,12 @@ git commit -m "test: verify JAW World chat journeys"
 ### Task 9: Credentialed trial-run handoff
 
 **Files:**
+
 - Modify after actual trials only: `docs/integration-debrief.md`
 - Modify after actual trials only: `docs/verification.md`
 
 **Interfaces:**
+
 - Consumes real JAW, World, DeepSeek, Jev and Sepolia credentials supplied through local/deployment secret storage.
 - Produces dated evidence and sponsor debrief; never commits credentials or raw proof payloads.
 

@@ -20,7 +20,7 @@ test("HTTP fixture: mission screen accessibility and responsive bounds", async (
     window.scrollTo(0, 0);
   });
   await page.screenshot({
-    path: `test-results/mission-${testInfo.project.name}.png`,
+    path: testInfo.outputPath(`mission-${testInfo.project.name}.png`),
     fullPage: true,
   });
 });

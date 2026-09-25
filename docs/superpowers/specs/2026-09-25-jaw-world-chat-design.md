@@ -27,14 +27,14 @@ This slice does not include a native Expo application, production deployment, in
 
 Each system answers a different question:
 
-| System | Question it answers |
-| --- | --- |
-| JAW | Which passkey-controlled smart account is operating this HumanOS account? |
-| World PoH | Is this account being linked to a unique human eligible for a single HumanOS root? |
-| ENSv2 | Which agent identity exists, what authority is published for it, and is that authority still active? |
-| JAW permissions | Which onchain calls, spend limits and time window may a delegated signer use? |
-| HumanOS policy | Is this exact proposed action allowed by the mission, human grant, ENS state, risk assessment and fresh approval? |
-| DeepSeek/Jev | What action is proposed, and what advisory risk/alignment assessment applies? |
+| System          | Question it answers                                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| JAW             | Which passkey-controlled smart account is operating this HumanOS account?                                         |
+| World PoH       | Is this account being linked to a unique human eligible for a single HumanOS root?                                |
+| ENSv2           | Which agent identity exists, what authority is published for it, and is that authority still active?              |
+| JAW permissions | Which onchain calls, spend limits and time window may a delegated signer use?                                     |
+| HumanOS policy  | Is this exact proposed action allowed by the mission, human grant, ENS state, risk assessment and fresh approval? |
+| DeepSeek/Jev    | What action is proposed, and what advisory risk/alignment assessment applies?                                     |
 
 No client callback, model response, wallet address, ENS record or JAW permission is sufficient by itself to authorize a protected side effect.
 
@@ -248,4 +248,3 @@ Live evidence remains separate from fixture evidence. Trial runs with real JAW, 
 - Model output cannot expand JAW, ENS or HumanOS authority.
 - Missing live integrations are shown as unavailable rather than replaced by hidden fixtures.
 - Typecheck, unit/integration tests, contract tests, responsive Playwright tests, lint, build and security scan pass.
-

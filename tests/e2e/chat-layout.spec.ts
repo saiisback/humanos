@@ -107,7 +107,7 @@ async function geometry(page: Page) {
 }
 test("populated conversation keeps composer visible at phone and desktop sizes, including an error", async ({
   page,
-}) => {
+}, testInfo) => {
   for (const size of [
     { width: 320, height: 700 },
     { width: 1280, height: 900 },
@@ -134,7 +134,7 @@ test("populated conversation keeps composer visible at phone and desktop sizes, 
     });
     await expect(page.getByRole("button", { name: /^Send/ })).toBeVisible();
     await page.screenshot({
-      path: `test-results/task-6-chat-${size.width}.png`,
+      path: testInfo.outputPath(`task-6-chat-${size.width}.png`),
     });
   }
 });

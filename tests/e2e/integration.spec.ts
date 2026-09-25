@@ -13,13 +13,12 @@ test("LIVE LOCAL API: readiness and unauthenticated onboarding", async ({
   expect(readiness.services).toBeInstanceOf(Array);
   await page.goto("/");
   await expect(
-    page.getByRole("button", { name: "Verify with World ID" }),
+    page.getByRole("button", { name: "Sign in with JAW" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Connection status" }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Connections" }).click();
+  await expect(page.getByRole("dialog", { name: "connections" })).toBeVisible();
   await page.screenshot({
-    path: `test-results/live-onboarding-${testInfo.project.name}.png`,
+    path: testInfo.outputPath(`live-onboarding-${testInfo.project.name}.png`),
     fullPage: true,
   });
 });

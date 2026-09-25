@@ -124,18 +124,16 @@ describe("JAW SIWE adapter", () => {
   it("requests fresh SIWE for a returning connection", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-25T10:01:00.000Z"));
-    const request = vi
-      .fn()
-      .mockResolvedValue({
-        accounts: [
-          {
-            address,
-            capabilities: {
-              signInWithEthereum: { message: message(), signature: "0x1234" },
-            },
+    const request = vi.fn().mockResolvedValue({
+      accounts: [
+        {
+          address,
+          capabilities: {
+            signInWithEthereum: { message: message(), signature: "0x1234" },
           },
-        ],
-      });
+        },
+      ],
+    });
     const client = createJawAuthClient({ request }, async () => {});
     await client.connect(challenge);
     await client.connect(challenge);
@@ -156,21 +154,19 @@ describe("JAW SIWE adapter", () => {
     vi.setSystemTime(new Date("2026-09-25T10:01:00.000Z"));
     const client = createJawAuthClient(
       {
-        request: vi
-          .fn()
-          .mockResolvedValue({
-            accounts: [
-              {
-                address,
-                capabilities: {
-                  signInWithEthereum: {
-                    message: message(),
-                    signature: "0x1234",
-                  },
+        request: vi.fn().mockResolvedValue({
+          accounts: [
+            {
+              address,
+              capabilities: {
+                signInWithEthereum: {
+                  message: message(),
+                  signature: "0x1234",
                 },
               },
-            ],
-          }),
+            },
+          ],
+        }),
       },
       async () => {},
     );

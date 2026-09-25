@@ -18,6 +18,20 @@ export function WorldVerification({
   onClose: () => void;
   onError: (error: unknown) => void;
 }) {
+  if (import.meta.env.MODE === "e2e")
+    return (
+      <dialog open aria-label="Synthetic World verification">
+        <p>Browser test only: synthetic Proof of Human result.</p>
+        <button
+          onClick={() => {
+            void onVerified({ synthetic: true }).then(onSuccess, onError);
+          }}
+        >
+          Complete synthetic verification
+        </button>
+        <button onClick={onClose}>Cancel synthetic verification</button>
+      </dialog>
+    );
   return (
     <IDKitRequestWidget
       open

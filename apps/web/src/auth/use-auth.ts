@@ -9,6 +9,7 @@ import {
   JawAuthError,
   type JawAuthClient,
 } from "./jaw";
+import { createE2EJawClient } from "./e2e-jaw";
 
 export type AuthStatus =
   | "loading"
@@ -129,10 +130,13 @@ export function createAuthStore(
   };
 }
 
-const jaw = createBrowserJawAuthClient(
-  import.meta.env.VITE_JAW_API_KEY ?? "",
-  import.meta.env.VITE_JAW_APP_LOGO_URL,
-);
+const jaw =
+  import.meta.env.MODE === "e2e"
+    ? createE2EJawClient()
+    : createBrowserJawAuthClient(
+        import.meta.env.VITE_JAW_API_KEY ?? "",
+        import.meta.env.VITE_JAW_APP_LOGO_URL,
+      );
 const auth = createAuthStore(jaw);
 let started = false;
 export function useAuth() {
