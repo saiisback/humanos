@@ -1,0 +1,19 @@
+{
+  "name": "@humanos/schemas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./canonicalize": "./src/canonicalize.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --outDir dist"
+  },
+  "dependencies": {
+    "valibot": "1.1.0",
+    "@noble/hashes": "1.8.0"
+  }
+}

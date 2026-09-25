@@ -1,0 +1,7 @@
+# Task 1 — repository foundation
+
+Implemented pnpm workspace pinned to pnpm 10.12.4 and Node 22.12.0; strict TypeScript, Vitest, Valibot, shared lint/format/test commands. Git initialized preserving supplied docs. Frozen domain and API DTOs in packages/schemas; consumption contract and endpoint paths in docs/interfaces.md. Canonical approval hashing uses SHA-256; separate explicit Keccak helper only for EVM commitments. Browser-safe pure hash implementation.
+
+Validation: canonicalizer stub produced three expected failing tests before implementation. Final suite: 20 tests passed across canonicalization and domain validation; workspace typecheck and lint passed. Domain tests reject unknown capabilities and invented fields. Canonical tests exercise key ordering, nested values, array ordering, shared references, negative zero, cyclic/sparse/accessor/hidden/symbol/nonfinite/undefined/class/function/bigint rejection.
+
+Assumptions/risks: JevAssessment is an internal normalized type; official provider wire protocol must be verified independently. ENS namehash is distinct from canonical hashing. IDs and dates must be validated before hashing and authorization. Provider environment values are unfilled deliberately; no credentials or fake provider success included. API implementation may add fields additively as real SDK integration requires. Current Node meets pin; pnpm install reported deprecated ESLint version, for follow-up dependency review.
