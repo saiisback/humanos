@@ -1,0 +1,5 @@
+# World server verification
+
+Implemented official IDKit4 signing, v4 full-payload server verification, Proof of Human issuer/identifier validation, expected environment/action/nonce/signal checks, challenge expiry, numeric-normalized nullifiers and same-human matching. Canonical approval bindings cover root, agent, mission, action type, payload hash, nonce, expiry. Nine tests pass with fixture transport; no live proof is claimed. RED run recorded9 failing tests before implementation; GREEN9.
+
+The API stores challenges/sessions/nullifiers in PostgreSQL and consumes challenges atomically. Root and sensitive proofs now share the registered humanos-root action to preserve documented action-scoped nullifier identity; each sensitive proof binds the exact action digest through its signal and a fresh signed nonce. Never remove the same-human check to accommodate different-action nullifiers. Dynamic payload signal binding and organizer qualification require live verification after credentials are provided.

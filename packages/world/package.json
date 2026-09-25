@@ -1,0 +1,16 @@
+{
+  "name": "@humanos/world",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@humanos/schemas": "workspace:*",
+    "@worldcoin/idkit-core": "4.3.0",
+    "valibot": "1.5.0"
+  }
+}
