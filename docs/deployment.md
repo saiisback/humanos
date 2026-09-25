@@ -2,7 +2,7 @@
 
 No public deployment or Sepolia transaction has been performed without credentials. Local URLs are not public demo URLs.
 
-The supported model configuration is `DEEPSEEK_API_KEY` and `JEV_API_KEY`, stored on the backend. A single OpenCode/gateway key is not supported until its endpoint, authentication scheme, model identifiers and response mapping are supplied. Do not place any model key in a `VITE_` variable or browser code.
+The supported model configuration is `DEEPSEEK_API_KEY` and `JEV_API_KEY`, stored on the backend. Flue is the only agent framework. Do not place any model key in a `VITE_` variable or browser code.
 
 1. Provision PostgreSQL17 and set `DATABASE_URL` in `.env` or hosting secret storage.
 2. Create an app/relying party at https://developer.world.org. Set `WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_SIGNING_KEY`; select `WORLD_ENVIRONMENT=staging` only for the simulator, `production` for real proofs. Enable Proof of Human and the `humanos-root` action. Allow repeated verifications for this action. Root and approval proofs deliberately share this fixed action for same-human nullifier linkage; each approval has a new signed RP challenge and an exact canonical binding in its signal. Verify a real root/approval proof pair before claiming acceptance. Resume: `pnpm dev`.

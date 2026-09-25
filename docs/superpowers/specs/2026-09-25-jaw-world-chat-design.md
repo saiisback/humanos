@@ -184,7 +184,7 @@ Persistence adds records for SIWE challenges, wallet accounts, root-account bind
 
 ## Model provider configuration
 
-DeepSeek Flash and Jev stay behind their existing model interfaces. The implementation accepts only documented provider configuration. If the supplied "OpenCode API key" is a gateway credential, its endpoint, authentication format, model identifiers and response compatibility must be documented before adding an adapter. The key must be placed in local or deployment secret storage, never in chat, source control, Vite public variables or test snapshots.
+DeepSeek Flash and Jev stay behind their existing model interfaces and run through the existing Flue agent framework. The implementation accepts only the documented backend provider configuration. Keys must be placed in local or deployment secret storage, never in chat, source control, Vite public variables or test snapshots.
 
 The UI displays provider readiness independently. Missing Jev fails closed for protected execution; missing DeepSeek prevents live proposal generation but does not fabricate a live result.
 

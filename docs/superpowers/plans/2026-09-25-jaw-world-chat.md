@@ -551,7 +551,7 @@ Do not weaken assertions to match broken layout. Ensure the scroller reserves co
 
 - [ ] **Step 4: Document exact configuration**
 
-Add `VITE_JAW_API_KEY` and explain that it is JAW's documented browser app configuration. Document `SEPOLIA_RPC_URL` as required for backend smart-account signature verification. State that an OpenCode/gateway key is not accepted until its endpoint, auth scheme and model mapping are known; existing `DEEPSEEK_API_KEY` and `JEV_API_KEY` remain the supported paths.
+Add `VITE_JAW_API_KEY` and explain that it is JAW's documented browser app configuration. Document `SEPOLIA_RPC_URL` as required for backend smart-account signature verification. Keep Flue as the sole agent framework and `DEEPSEEK_API_KEY` plus `JEV_API_KEY` as the supported backend model configuration.
 
 - [ ] **Step 5: Run full verification**
 
@@ -596,7 +596,7 @@ git commit -m "test: verify JAW World chat journeys"
 
 - [ ] **Step 1: Validate credential names without printing values**
 
-Report only `SET`/`EMPTY` for required variables. The OpenCode/gateway credential is accepted only after documenting its official endpoint, authorization header, DeepSeek model ID and Jev compatibility; otherwise request separate supported provider keys.
+Report only `SET`/`EMPTY` for required variables. Use the existing Flue runtime with separate `DEEPSEEK_API_KEY` and `JEV_API_KEY` backend credentials.
 
 - [ ] **Step 2: Run live journeys**
 
