@@ -13,8 +13,9 @@ import {
   type ModelConfig,
 } from "../transport.js";
 import { DEEPSEEK_MODEL, DEEPSEEK_ENDPOINT } from "./provider.js";
+import { OPENCODE_BASE_URL, OPENCODE_DEEPSEEK_MODEL } from "../opencode.js";
 import {
-  CompletionSchema,
+  completionSchema,
   MissionProposalSchema,
   ActionProposalDraftSchema,
 } from "./schemas.js";
@@ -26,6 +27,12 @@ const capabilityByType = Object.fromEntries(
 );
 export function createDeepSeekClient(config: ModelConfig) {
   validateConfig(config);
+  const model =
+    config.provider === "opencode" ? OPENCODE_DEEPSEEK_MODEL : DEEPSEEK_MODEL;
+  const endpoint =
+    config.provider === "opencode"
+      ? `${OPENCODE_BASE_URL}/chat/completions`
+      : DEEPSEEK_ENDPOINT;
   async function propose(input: unknown, kind: "mission" | "action") {
     const data = canonicalize(input);
     if (data.length > 100000) throw new ModelUnavailableError();
@@ -33,8 +40,8 @@ export function createDeepSeekClient(config: ModelConfig) {
       kind === "mission"
         ? "goal:string, title:string, capabilities:Capability[], steps:string[], expiresAt:ISO timestamp"
         : "type:ActionType, capability:Capability, payload:JSON object, reason:string";
-    const raw = await requestJson(config, DEEPSEEK_ENDPOINT, {
-      model: DEEPSEEK_MODEL,
+    const raw = await requestJson(config, endpoint, {
+      model,
       response_format: { type: "json_object" },
       max_tokens: 4096,
       messages: [
@@ -46,7 +53,7 @@ export function createDeepSeekClient(config: ModelConfig) {
       ],
     });
     try {
-      const completion = v.parse(CompletionSchema, raw);
+      const completion = v.parse(completionSchema(model), raw);
       const parsed = JSON.parse(
         completion.choices[0]!.message.content,
       ) as unknown;
@@ -59,7 +66,10 @@ export function createDeepSeekClient(config: ModelConfig) {
         capabilityByType[result.type] !== result.capability
       )
         throw new Error();
-      config.log?.({ provider: "deepseek", modelVersion: completion.model });
+      config.log?.({
+        provider: config.provider ?? "direct",
+        modelVersion: completion.model,
+      });
       return result;
     } catch {
       throw new ModelUnavailableError();

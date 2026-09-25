@@ -33,11 +33,18 @@ if (
     environment:
       process.env.WORLD_ENVIRONMENT === "staging" ? "staging" : "production",
   });
-if (process.env.DEEPSEEK_API_KEY && process.env.JEV_API_KEY) {
+const openCodeKey = process.env.OPENCODE_API_KEY?.trim();
+const deepSeekKey = openCodeKey || process.env.DEEPSEEK_API_KEY?.trim();
+const jevKey = openCodeKey || process.env.JEV_API_KEY?.trim();
+if (deepSeekKey && jevKey) {
   const deepseek = createDeepSeekClient({
-    apiKey: process.env.DEEPSEEK_API_KEY,
+    apiKey: deepSeekKey,
+    provider: openCodeKey ? "opencode" : "direct",
   });
-  const jev = createJevClient({ apiKey: process.env.JEV_API_KEY });
+  const jev = createJevClient({
+    apiKey: jevKey,
+    provider: openCodeKey ? "opencode" : "direct",
+  });
   config.models = {
     proposeMission: deepseek.proposeMission,
     proposeNextAction: deepseek.proposeNextAction,
@@ -52,7 +59,7 @@ if (process.env.DEMO_SERVICE_URL && process.env.DEMO_SERVICE_SECRET)
       ? { allowHttpHost: process.env.DEMO_SERVICE_ALLOW_HTTP_HOST }
       : {}),
   });
-if (process.env.FLUE_URL && process.env.DEEPSEEK_API_KEY)
+if (process.env.FLUE_URL && deepSeekKey && process.env.FLUE_INTERNAL_SECRET)
   config.flueUrl = process.env.FLUE_URL;
 if (process.env.FLUE_INTERNAL_SECRET)
   config.internalSecret = process.env.FLUE_INTERNAL_SECRET;

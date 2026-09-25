@@ -5,10 +5,13 @@ import { useMission } from "../hooks/use-mission.js";
 import { useCapabilities } from "../hooks/use-capabilities.js";
 import { prepareNextAction } from "../mission.js";
 import { agentConfig } from "../config.js";
-import { humanOSDeepSeekProvider } from "../provider.js";
+import {
+  humanOSDeepSeekProvider,
+  humanOSDeepSeekModelId,
+} from "../provider.js";
 setProvider(humanOSDeepSeekProvider());
 export function HumanOS({ id }: { id: string }) {
-  useModel("deepseek/deepseek-flash", { thinkingLevel: "low" });
+  useModel(`deepseek/${humanOSDeepSeekModelId()}`, { thinkingLevel: "low" });
   const mission = useMission(id);
   const capabilities = useCapabilities(mission);
   if (capabilities.includes("prepare_next_action"))

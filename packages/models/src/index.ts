@@ -1,4 +1,5 @@
 export { createDeepSeekClient } from "./deepseek/client.js";
+export * from "./opencode.js";
 export * from "./deepseek/provider.js";
 export { createJevClient } from "./jev/client.js";
 export { JEV_MODEL, QUESTION_VERSION } from "./jev/questions.js";

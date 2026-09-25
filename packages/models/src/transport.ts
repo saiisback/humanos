@@ -1,5 +1,6 @@
 export interface ModelConfig {
   apiKey: string;
+  provider?: "direct" | "opencode";
   fetch?: typeof fetch;
   timeoutMs?: number;
   retries?: number;

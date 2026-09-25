@@ -14,6 +14,7 @@ import {
 } from "../transport.js";
 import { QUESTIONS, JEV_MODEL, QUESTION_VERSION } from "./questions.js";
 import { JEV_THRESHOLDS } from "./policy-map.js";
+import { OPENCODE_BASE_URL, OPENCODE_JEV_MODEL } from "../opencode.js";
 const probability = v.pipe(
   v.number(),
   v.finite(),
@@ -41,21 +42,26 @@ const score = v.strictObject({
   probabilities: v.strictObject({ "0": probability, "1": probability }),
   confidence: probability,
 });
-const wire = v.object({
-  model: v.literal(JEV_MODEL),
-  answers: v.strictObject({
-    risk: choice,
-    alignment: score,
-    injection: noul,
-    review: noul,
-  }),
-  usage: v.object({
-    input_tokens: v.pipe(v.number(), v.integer(), v.minValue(0)),
-    output_tokens: v.pipe(v.number(), v.integer(), v.minValue(0)),
-  }),
-});
+const wire = (opencode: boolean) =>
+  v.object({
+    model: opencode
+      ? v.picklist([JEV_MODEL, OPENCODE_JEV_MODEL])
+      : v.literal(JEV_MODEL),
+    answers: v.strictObject({
+      risk: choice,
+      alignment: score,
+      injection: noul,
+      review: noul,
+    }),
+    usage: v.object({
+      input_tokens: v.pipe(v.number(), v.integer(), v.minValue(0)),
+      output_tokens: v.pipe(v.number(), v.integer(), v.minValue(0)),
+    }),
+  });
 export function createJevClient(config: ModelConfig) {
   validateConfig(config);
+  const opencode = config.provider === "opencode";
+  const requestModel = opencode ? OPENCODE_JEV_MODEL : JEV_MODEL;
   const cache = new Map<
     string,
     { assessment: JevAssessment; expires: number }
@@ -77,11 +83,13 @@ export function createJevClient(config: ModelConfig) {
         return structuredClone(cached.assessment);
       const raw = await requestJson(
         config,
-        "https://api.typesafe.ai/v1/systemone",
-        { state: snapshot, model: JEV_MODEL, questions: QUESTIONS },
+        opencode
+          ? `${OPENCODE_BASE_URL}/systemone`
+          : "https://api.typesafe.ai/v1/systemone",
+        { state: snapshot, model: requestModel, questions: QUESTIONS },
       );
       try {
-        const { answers: a, model } = v.parse(wire, raw);
+        const { answers: a, model } = v.parse(wire(opencode), raw);
         for (const distribution of [
           a.risk.probabilities,
           a.alignment.probabilities,
@@ -101,7 +109,8 @@ export function createJevClient(config: ModelConfig) {
         const assessment = v.parse(JevAssessmentSchema, {
           stateHash,
           questionVersion: QUESTION_VERSION,
-          modelVersion: model,
+          // Normalize the allowlisted gateway route label for existing policy bindings.
+          modelVersion: JEV_MODEL,
           evaluatedAt: new Date().toISOString(),
           risk: a.risk.choice,
           missionAligned: a.alignment.score >= JEV_THRESHOLDS.alignment,
@@ -114,7 +123,7 @@ export function createJevClient(config: ModelConfig) {
             "Typed evaluation; deterministic policy remains authoritative.",
         });
         config.log?.({
-          provider: "typesafe",
+          provider: opencode ? "opencode" : "typesafe",
           stateHash,
           questionVersion: QUESTION_VERSION,
           modelVersion: model,

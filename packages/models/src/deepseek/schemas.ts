@@ -3,15 +3,17 @@ export {
   MissionProposalSchema,
   ActionProposalDraftSchema,
 } from "@humanos/schemas";
-export const CompletionSchema = v.object({
-  model: v.literal("deepseek-flash"),
-  choices: v.pipe(
-    v.array(
-      v.object({
-        finish_reason: v.literal("stop"),
-        message: v.object({ content: v.string() }),
-      }),
+export const completionSchema = (model: string) =>
+  v.object({
+    model: v.literal(model),
+    choices: v.pipe(
+      v.array(
+        v.object({
+          finish_reason: v.literal("stop"),
+          message: v.object({ content: v.string() }),
+        }),
+      ),
+      v.length(1),
     ),
-    v.length(1),
-  ),
-});
+  });
+export const CompletionSchema = completionSchema("deepseek-flash");

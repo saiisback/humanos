@@ -21,6 +21,10 @@ pnpm dev
 
 Open http://localhost:5173. The API is on 3001, Flue on 3002, and the protected development application/calendar service on 3003. The development calendar is a durable record in this service, not an external Google Calendar booking.
 
+Set `OPENCODE_API_KEY` in the root `.env` to route the API and Flue through OpenCode Zen: DeepSeek uses `deepseek-v4.1-flash` at `/chat/completions`, and Jev uses `jev-1.13` at `/systemone`. This key takes precedence over the optional direct-provider `DEEPSEEK_API_KEY` and `JEV_API_KEY`. Restart `pnpm dev` after changing environment values. The Connections screen reports configuration, not a successful paid model request.
+
+For ENSv2, register a parent name with a dedicated test wallet at https://app.ens.dev on Ethereum Sepolia. Registration requires Sepolia ETH for gas and test MockUSDC for the registrar fee. Set `HUMANOS_PARENT_LABEL` to the label without `.eth`, and provide the owning wallet's `DEPLOYER_PRIVATE_KEY` locally. Follow [the deployment guide](packages/contracts/README.md) to simulate, deploy, and record HumanOSRegistrar. Set `ENS_REGISTRAR_ADDRESS` to that deployment's address, `ENS_OPERATOR_PRIVATE_KEY` to its owner's key, and `ENS_AGENT_KEY_SEED` to a stable random 32-byte `0x`-prefixed secret. Keep these values in the ignored `.env`; never commit keys. `SEPOLIA_RPC_URL` supplies chain access. ENSv2 uses Ethereum Sepolia, independently of the wallet's other supported chains.
+
 The task's prepared local `.env` uses an isolated PostgreSQL instance on port 55432; it contains only local service credentials. Do not commit it. See [deployment instructions](docs/deployment.md) for external integration setup and exact resume commands.
 
 ## Verify
