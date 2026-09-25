@@ -613,6 +613,35 @@ function App() {
                                 </strong>
                                 <p>{date(receipt.executedAt)}</p>
                                 <code>{receipt.id}</code>
+                                {receipt.metadata.ensUpdateStatus ===
+                                  "PENDING" && (
+                                  <>
+                                    <p>
+                                      ENS receipt publication pending. Execution
+                                      has its own receipt above; onchain
+                                      publication is not yet confirmed.
+                                    </p>
+                                    <button
+                                      className="secondary"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        void perform(async () => {
+                                          await api(
+                                            `/actions/${encodeURIComponent(a.id)}/execute`,
+                                            {},
+                                          );
+                                          await select(m.id);
+                                        })
+                                      }
+                                    >
+                                      Retry ENS receipt publication
+                                    </button>
+                                  </>
+                                )}
+                                {receipt.metadata.ensUpdateStatus ===
+                                  "CONFIRMED" && (
+                                  <p>ENS receipt publication confirmed</p>
+                                )}
                                 {receipt.status ===
                                   "RECONCILIATION_REQUIRED" && (
                                   <>
