@@ -762,6 +762,11 @@ export function createApi(config: ApiConfig) {
       Object.freeze(registration.approvedCapabilities);
       Object.freeze(registration.steps);
       Object.freeze(registration);
+      // Account-row contention can outlast the earlier checks while this transaction waits.
+      if (Date.parse(currentSession.expiresAt) <= Date.now())
+        throw new HttpError(401, "UNAUTHENTICATED");
+      if (Date.parse(fresh.expiresAt) <= Date.now())
+        throw new HttpError(409, "CONFLICT");
       const agentEns = await requireService(config.ens).register(
         registration,
         rootOwner,

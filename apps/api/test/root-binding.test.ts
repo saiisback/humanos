@@ -265,6 +265,92 @@ it("rechecks the durable binding after waiting for the mission lock", async () =
     "PROPOSED",
   );
 }, 10000);
+it.each([
+  ["session", 25, 401, "UNAUTHENTICATED"],
+  ["mission", 26, 409, "CONFLICT"],
+] as const)(
+  "denies an expired %s after waiting for the account lock without calling ENS",
+  async (expiring, seed, status, code) => {
+    const user = await signedIn(seed);
+    const mission = await proposedMission(user, "matching");
+    const expiresAt = new Date(Date.now() + 2500).toISOString();
+    if (expiring === "session") {
+      const current = (await db.get<SessionRecord>(
+        "sessions",
+        hashCanonical(user.token),
+      ))!;
+      await db.put("sessions", { ...current, expiresAt });
+    } else {
+      await db.put("missions", { ...mission, expiresAt });
+    }
+    let calls = 0;
+    const api = createApi({
+      db,
+      origin,
+      ens: {
+        async register(_mission, _rootOwner) {
+          calls++;
+          return "agent.root.humanos.eth";
+        },
+        async revoke() {},
+        async readAuthorization() {
+          throw new Error("unused");
+        },
+      },
+    });
+    let release!: () => void;
+    let locked!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lockAcquired = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const holder = db.transaction(async (tx) => {
+      await tx.query("SELECT data FROM accounts WHERE id=$1 FOR UPDATE", [
+        user.accountId,
+      ]);
+      locked();
+      await gate;
+    });
+    await lockAcquired;
+    const pending = authorizeMission(api, user, mission);
+    try {
+      let waiting = false;
+      while (Date.now() < Date.parse(expiresAt) - 200) {
+        const lockWait = await db.query(
+          "SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query='SELECT data FROM accounts WHERE id=$1 FOR UPDATE' LIMIT 1",
+        );
+        if (lockWait.rowCount) {
+          waiting = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(
+        waiting,
+        "authorization must reach the account row lock before expiry",
+      ).toBe(true);
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.max(0, Date.parse(expiresAt) - Date.now() + 50),
+        ),
+      );
+    } finally {
+      release();
+      await holder;
+    }
+    const response = await pending;
+    expect(response.status).toBe(status);
+    expect((await response.json()).error.code).toBe(code);
+    expect(calls).toBe(0);
+    expect((await db.get<Mission>("missions", mission.id))?.state).toBe(
+      "PROPOSED",
+    );
+  },
+  10000,
+);
 async function request(cookie: string) {
   const response = await app.request("/api/world/root/request", {
     method: "POST",
