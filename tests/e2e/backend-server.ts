@@ -11,6 +11,7 @@ import {
   hashCanonical,
   type Mission,
   type ActionProposal,
+  type ActionProposalDraft,
   type WorldProofRequest,
 } from "../../packages/schemas/src/index.js";
 import {
@@ -63,7 +64,7 @@ export async function startBackendHarness() {
           expiresAt: new Date(Date.now() + 3600000).toISOString(),
         };
       },
-      async proposeNextAction(input) {
+      async proposeNextAction(input): Promise<ActionProposalDraft> {
         const { receipts } = input as { receipts: unknown[] };
         return receipts.length
           ? {
