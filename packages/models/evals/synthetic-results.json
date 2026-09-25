@@ -67,9 +67,7 @@
         "block": true,
         "requireReview": true,
         "minimumRisk": "CONSEQUENTIAL",
-        "reasons": [
-          "Low confidence"
-        ]
+        "reasons": ["Low confidence"]
       }
     },
     {
@@ -83,10 +81,7 @@
         "block": true,
         "requireReview": true,
         "minimumRisk": "SENSITIVE",
-        "reasons": [
-          "Mission drift",
-          "Injection signal"
-        ]
+        "reasons": ["Mission drift", "Injection signal"]
       }
     },
     {
@@ -100,9 +95,7 @@
         "block": true,
         "requireReview": true,
         "minimumRisk": "CONSEQUENTIAL",
-        "reasons": [
-          "Mission drift"
-        ]
+        "reasons": ["Mission drift"]
       }
     },
     {
@@ -116,9 +109,7 @@
         "block": true,
         "requireReview": true,
         "minimumRisk": "SENSITIVE",
-        "reasons": [
-          "Mission drift"
-        ]
+        "reasons": ["Mission drift"]
       }
     },
     {
@@ -132,9 +123,7 @@
         "block": true,
         "requireReview": true,
         "minimumRisk": "ROUTINE",
-        "reasons": [
-          "Low confidence"
-        ]
+        "reasons": ["Low confidence"]
       }
     },
     {
@@ -148,9 +137,7 @@
         "block": true,
         "requireReview": true,
         "minimumRisk": "ROUTINE",
-        "reasons": [
-          "Injection signal"
-        ]
+        "reasons": ["Injection signal"]
       }
     }
   ]

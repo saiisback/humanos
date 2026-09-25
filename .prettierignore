@@ -4,6 +4,8 @@ dist
 .next
 packages/contracts/out
 packages/contracts/cache
+packages/contracts/broadcast
+packages/contracts/deployments/.local
 
 packages/contracts/lib
 playwright-report

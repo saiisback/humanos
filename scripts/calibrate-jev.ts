@@ -1,5 +1,7 @@
 /** Run with pnpm calibrate [--live]. No credentials => synthetic only. */
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   hashCanonical,
   type JevAssessment,
@@ -11,6 +13,8 @@ import {
   QUESTION_VERSION,
   JEV_THRESHOLDS,
 } from "../packages/models/src/index.js";
+const envFile = fileURLToPath(new URL("../.env", import.meta.url));
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 const live = process.argv.includes("--live");
 if (live && !process.env.JEV_API_KEY)
   throw new Error("Live calibration requires JEV_API_KEY");

@@ -10,7 +10,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --outDir dist"
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "valibot": "1.5.0",

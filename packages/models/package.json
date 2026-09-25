@@ -9,7 +9,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --outDir dist"
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@humanos/schemas": "workspace:*",
