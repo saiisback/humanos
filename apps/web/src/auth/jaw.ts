@@ -180,7 +180,10 @@ export function createBrowserJawAuthClient(
       }
     }
     const jaw = JAW.create(options);
-    browserClient = createJawAuthClient(jaw.provider, () => jaw.disconnect());
+    browserClient = createJawAuthClient(
+      { request: (args) => jaw.provider.request(args) },
+      () => jaw.disconnect(),
+    );
   }
   return browserClient;
 }
