@@ -1,0 +1,26 @@
+{
+  "name": "@humanos/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@humanos/schemas": "workspace:*",
+    "@worldcoin/idkit": "4.3.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "@fontsource/dm-sans": "5.2.6",
+    "@fontsource/instrument-serif": "5.2.6"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.1.6",
+    "vite": "6.3.5",
+    "@vitejs/plugin-react": "4.5.1",
+    "@axe-core/playwright": "4.10.2"
+  }
+}
