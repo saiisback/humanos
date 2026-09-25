@@ -29,6 +29,12 @@ function object(value: unknown): Record<string, unknown> {
     throw new WorldVerificationError();
   return value as Record<string, unknown>;
 }
+function isProofField(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^(?:0x[0-9a-fA-F]{1,64}|[0-9]{1,78})$/.test(value)
+  );
+}
 export function normalizeNullifier(value: unknown): string {
   if (typeof value !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(value))
     throw new WorldVerificationError("Invalid nullifier");
@@ -122,9 +128,7 @@ export function createWorldVerifier(config: WorldConfig) {
         item.issuer_schema_id !== 1 ||
         !Array.isArray(item.proof) ||
         item.proof.length !== 5 ||
-        item.proof.some(
-          (x) => typeof x !== "string" || !/^0x[0-9a-fA-F]+$/.test(x),
-        ) ||
+        item.proof.some((x) => !isProofField(x)) ||
         typeof item.signal_hash !== "string" ||
         BigInt(item.signal_hash) !== BigInt(hashSignal(expected.signal))
       )

@@ -80,6 +80,22 @@ describe("official World verification boundary", () => {
     expect((await verifier.verify(request, p)).nullifier).toBe("1");
     expect(JSON.parse(body)).toEqual(p);
   });
+  it("accepts decimal field elements returned by the staging v4 simulator", async () => {
+    let calls = 0;
+    const verifier = createWorldVerifier({
+      ...config,
+      fetch: async () => {
+        calls++;
+        return Response.json(success);
+      },
+    });
+    const p = await sample();
+    p.responses[0]!.proof = ["1", "2", "3", "4", "5"];
+    await expect(verifier.verify(request, p)).resolves.toMatchObject({
+      nullifier: "1",
+    });
+    expect(calls).toBe(1);
+  });
   it.each(["action", "nonce", "environment"])(
     "rejects mismatched %s before upstream",
     async (key) => {
