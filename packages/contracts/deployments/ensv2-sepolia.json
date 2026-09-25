@@ -1,0 +1,64 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "source": {
+    "repository": "https://github.com/ensdomains/contracts-v2",
+    "commit": "71a3b7339dbc55ab47667abdfe8303bac4f4c24e",
+    "commitMessage": "chore(sepolia): deploy a fresh v2 migration set",
+    "addressesFile": "contracts/docs/addresses/sepolia.md",
+    "artifactsDir": "contracts/deployments/sepolia",
+    "docsPinEvidence": "https://github.com/ensdomains/docs/blob/35d64839ac1956d3a30a8dc795c2ae7392c041d1/scripts/ensv2-deployments.ts (CONTRACTS_V2_COMMIT) rendered at https://docs.ens.domains/learn/deployments#sepolia-ensv2-beta"
+  },
+  "verification": {
+    "checkedAt": "2026-09-24",
+    "rpc": "https://ethereum-sepolia-rpc.publicnode.com (public, read-only)",
+    "checkedAtBlock": 11765798,
+    "method": "eth_getCode compared byte-for-byte with the pinned artifact deployedBytecode; all differing bytes fall in immutableReferences (PermissionedResolverImpl 60=3x20, UserRegistryImpl 100=5x20, VerifiableFactory 40=2x20, ETHRegistry 40=2x20). RootRegistry.getSubregistry('eth') == ETHRegistry; ETHRegistry.getParent() == (RootRegistry,'eth'); UniversalResolverV2.ROOT_REGISTRY() == RootRegistry; UpgradableUniversalResolverProxy.isENSv2() == true."
+  },
+  "contracts": {
+    "RootRegistry": {
+      "address": "0x9703dbd26dab89504490994138cf2c575251a9ce",
+      "deployBlock": 11708988
+    },
+    "ETHRegistry": {
+      "address": "0x657ea849311d3d5823348dded7c2aaafb3ede09e",
+      "deployBlock": 11709066
+    },
+    "ETHRegistrar": {
+      "address": "0xabe76f6c8dfced81aa5a2bb8034202a7136b94ca",
+      "deployBlock": 11709083
+    },
+    "VerifiableFactory": {
+      "address": "0x9e726eb570beb6bceb495ab8cda7df517d4e841c",
+      "deployBlock": 11708995
+    },
+    "PermissionedResolverImpl": {
+      "address": "0x14f09fd05d4585759e54844dc9b00147131cf243",
+      "deployBlock": 11709070
+    },
+    "UserRegistryImpl": {
+      "address": "0xa80338aaa8d23831cea25e858d1774534abb0263",
+      "deployBlock": 11709076
+    },
+    "UniversalResolverV2": {
+      "address": "0x5d25c1d6acbb71b7a28aa7899618a3412a8303e3",
+      "deployBlock": 11709101
+    },
+    "UpgradableUniversalResolverProxy": {
+      "address": "0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe",
+      "deployBlock": null
+    },
+    "LabelStore": {
+      "address": "0x375c082021e677a40ea2ae094d050602dba90992",
+      "deployBlock": 11708987
+    },
+    "StandardRentPriceOracle": {
+      "address": "0x9b0b9c65bdaf9794ff7697e4dcfb1f50581072bb",
+      "deployBlock": 11709073
+    },
+    "MockUSDC": {
+      "address": "0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e",
+      "deployBlock": 11708992
+    }
+  }
+}

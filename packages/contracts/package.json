@@ -1,0 +1,15 @@
+{
+  "name": "@humanos/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deps": "./script/install-deps.sh",
+    "build": "./script/forge.sh build",
+    "test": "./script/forge.sh test -vvv",
+    "abi": "./script/forge.sh build && node script/export-abi.mjs",
+    "deploy:sepolia:dry": "./script/forge.sh script script/Deploy.s.sol:Deploy --rpc-url sepolia",
+    "deploy:sepolia": "./script/forge.sh script script/Deploy.s.sol:Deploy --rpc-url sepolia --broadcast --verify --verifier sourcify",
+    "record:sepolia": "node script/record-deployment.mjs"
+  }
+}
