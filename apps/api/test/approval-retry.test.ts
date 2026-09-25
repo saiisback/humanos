@@ -314,3 +314,66 @@ it.each(["DENIED", "CANCELLED", "CONSUMED", "VERIFIED"])(
     );
   },
 );
+it("audits cancellation/rejection and one concurrent expiry transition without payloads", async () => {
+  const s = await setup();
+  const route = `/api/actions/${s.action.id}/approval`;
+  await s.app.request(route + "/request", {
+    method: "POST",
+    headers: s.headers,
+  });
+  expect(
+    (
+      await s.app.request(route + "/cancel", {
+        method: "POST",
+        headers: s.headers,
+      })
+    ).status,
+  ).toBe(200);
+  const cancelled = (await db.list<any>("audit")).find(
+    (e) => e.missionId === s.mission.id && e.type === "APPROVAL_CANCELLED",
+  );
+  expect(cancelled).toMatchObject({
+    actionId: s.action.id,
+    previousState: "AWAITING_APPROVAL",
+    nextState: "REJECTED",
+  });
+  const x = await setup();
+  await db.put("missions", { ...x.mission, expiresAt: "2020-01-01T00:00:00Z" });
+  const responses = await Promise.all(
+    [1, 2].map(() =>
+      x.app.request(`/api/missions/${x.mission.id}`, { headers: x.headers }),
+    ),
+  );
+  expect(responses.every((r) => r.status === 200)).toBe(true);
+  const events = (await db.list<any>("audit")).filter(
+    (e) => e.missionId === x.mission.id && e.type === "MISSION_EXPIRED",
+  );
+  expect(events).toHaveLength(1);
+  expect(JSON.stringify([...events, cancelled])).not.toContain("Alice");
+});
+it("audits denied proof attempt without logging proof contents or consuming pending approval", async () => {
+  const s = await setup();
+  const route = `/api/actions/${s.action.id}/approval`;
+  const requested = await (
+    await s.app.request(route + "/request", {
+      method: "POST",
+      headers: s.headers,
+    })
+  ).json();
+  await s.app.request(route + "/verify", {
+    method: "POST",
+    headers: s.headers,
+    body: JSON.stringify({
+      requestId: requested.request.requestId,
+      proof: { nonce: "PRIVATE_PROOF_DO_NOT_LOG" },
+    }),
+  });
+  const events = (await db.list<any>("audit")).filter(
+    (e) => e.actionId === s.action.id,
+  );
+  expect(events.some((e) => e.type === "WORLD_APPROVAL_DENIED")).toBe(true);
+  expect(JSON.stringify(events)).not.toContain("PRIVATE_PROOF_DO_NOT_LOG");
+  expect((await db.get<any>("approvals", requested.approval.id)).status).toBe(
+    "PENDING",
+  );
+});

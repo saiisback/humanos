@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
+import * as v from "valibot";
 import { Database } from "@humanos/database";
 import { authorize, POLICY_VERSION, transition } from "@humanos/policy";
 import { JEV_MODEL, JEV_QUESTION_VERSION } from "@humanos/models";
 import {
   hashCanonical,
+  JevAssessmentSchema,
+  type PolicyDecision,
   type ActionProposal,
   type AgentAuthorization,
   type Approval,
@@ -33,6 +36,14 @@ export interface ExecutionDependencies {
   }) => Promise<void>;
   clock?: () => number;
 }
+class ExecutionDenied extends Error {
+  constructor(
+    readonly event: AuditEvent,
+    reason: string,
+  ) {
+    super(reason);
+  }
+}
 export function createExecutor(deps: ExecutionDependencies) {
   const now = deps.clock ?? Date.now;
   const stamp = () => new Date(now()).toISOString();
@@ -55,6 +66,48 @@ export function createExecutor(deps: ExecutionDependencies) {
     metadata,
     createdAt: stamp(),
   });
+  function decisionAudit(
+    mission: Mission,
+    action: ActionProposal,
+    assessment: unknown,
+    decision: PolicyDecision,
+    phase: string,
+  ): AuditEvent {
+    const parsed = v.safeParse(JevAssessmentSchema, assessment);
+    const summary: AuditEvent["metadata"] = parsed.success
+      ? {
+          stateHash: parsed.output.stateHash,
+          evaluatedAt: parsed.output.evaluatedAt,
+          risk: parsed.output.risk,
+          confidence: parsed.output.confidence,
+          missionAligned: parsed.output.missionAligned,
+          missionAlignmentScore: parsed.output.missionAlignmentScore,
+          injectionDetected: parsed.output.injectionDetected,
+          injectionScore: parsed.output.injectionScore,
+          requiresReview: parsed.output.requiresReview,
+          modelVersionMatches: parsed.output.modelVersion === JEV_MODEL,
+          questionVersionMatches:
+            parsed.output.questionVersion === JEV_QUESTION_VERSION,
+        }
+      : { valid: false };
+    return audit(
+      mission,
+      action,
+      decision.allowed ? "EXECUTION_AUTHORIZED" : "EXECUTION_DENIED",
+      mission.state,
+      {
+        phase,
+        payloadHash: action.payloadHash,
+        assessment: summary,
+        decision: {
+          allowed: decision.allowed,
+          risk: decision.risk,
+          requiresApproval: decision.requiresApproval,
+          reasons: decision.reasons,
+        },
+      },
+    );
+  }
   function withEnsCommitment(receipt: ExecutionReceipt): ExecutionReceipt {
     if (!deps.updateEnsReceipt) return receipt;
     const receiptHash = hashCanonical({
@@ -126,9 +179,9 @@ export function createExecutor(deps: ExecutionDependencies) {
     });
   }
   return async (actionId: string): Promise<ExecutionReceipt> => {
-    const receipt = await deps.db.withLockedAction(
-      actionId,
-      async (tx, action) => {
+    let receipt: ExecutionReceipt;
+    try {
+      receipt = await deps.db.withLockedAction(actionId, async (tx, action) => {
         const prior = await tx.getReceiptForAction(actionId);
         if (prior?.status === "SUCCEEDED") return prior;
         const mission = await tx.get<Mission>("missions", action.missionId);
@@ -199,7 +252,17 @@ export function createExecutor(deps: ExecutionDependencies) {
           authorization,
           now: new Date(now()),
         });
-        if (!decision.allowed) throw new Error(decision.reasons.join(","));
+        if (!decision.allowed)
+          throw new ExecutionDenied(
+            decisionAudit(
+              mission,
+              action,
+              assessment,
+              decision,
+              "INITIAL_CHECK",
+            ),
+            decision.reasons.join(","),
+          );
         if (
           !["SUBMIT_APPLICATION", "CREATE_CALENDAR_EVENT"].includes(action.type)
         )
@@ -214,7 +277,21 @@ export function createExecutor(deps: ExecutionDependencies) {
           authorization: current,
           now: new Date(now()),
         });
-        if (!recheck.allowed) throw new Error(recheck.reasons.join(","));
+        if (!recheck.allowed)
+          throw new ExecutionDenied(
+            decisionAudit(
+              mission,
+              action,
+              assessment,
+              recheck,
+              "FINAL_RECHECK",
+            ),
+            recheck.reasons.join(","),
+          );
+        await tx.insert(
+          "audit",
+          decisionAudit(mission, action, assessment, recheck, "FINAL_RECHECK"),
+        );
         const executing = {
           ...mission,
           state: transition(mission.state, "EXECUTE"),
@@ -262,8 +339,13 @@ export function createExecutor(deps: ExecutionDependencies) {
           }),
         );
         return receipt;
-      },
-    );
+      });
+    } catch (error) {
+      // Denial attempts survive the rejected transaction, while its consumption/state writes roll back.
+      if (error instanceof ExecutionDenied)
+        await deps.db.insert("audit", error.event);
+      throw error;
+    }
     return receipt.status === "SUCCEEDED" && deps.updateEnsReceipt
       ? updateEns(actionId)
       : receipt;

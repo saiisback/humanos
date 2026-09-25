@@ -332,3 +332,55 @@ it("blocks stale ENS authorization before effects", async () => {
   await expect(execute(s.action.id)).rejects.toThrow();
   expect(s.calls).toBe(0);
 });
+it("persists final policy and assessment summary without free text or personal payloads", async () => {
+  const s = await setup();
+  const execute = createExecutor({
+    db,
+    readAuthorization: s.auth,
+    evaluate: async (state) => ({
+      ...(await s.evaluate(state)),
+      reason: "PRIVATE_REASON_DO_NOT_LOG",
+    }),
+    effect: s.effect,
+  });
+  await execute(s.action.id);
+  const event = (await db.list<any>("audit")).find(
+    (e) => e.actionId === s.action.id && e.type === "EXECUTION_AUTHORIZED",
+  );
+  expect(event.metadata.decision).toMatchObject({
+    allowed: true,
+    risk: "SENSITIVE",
+    requiresApproval: true,
+  });
+  expect(event.metadata.assessment).toMatchObject({
+    confidence: 0.99,
+    missionAligned: true,
+    injectionDetected: false,
+  });
+  expect(JSON.stringify(event)).not.toContain("PRIVATE_REASON_DO_NOT_LOG");
+  expect(JSON.stringify(event)).not.toContain("Alice");
+});
+it("persists denial after rollback without consuming approval or invoking effect", async () => {
+  const s = await setup();
+  let reads = 0;
+  const execute = createExecutor({
+    db,
+    readAuthorization: async () => {
+      if (++reads === 2) s.revoke();
+      return s.auth();
+    },
+    evaluate: s.evaluate,
+    effect: s.effect,
+  });
+  await expect(execute(s.action.id)).rejects.toThrow();
+  expect((await db.get<Approval>("approvals", s.approval.id))?.status).toBe(
+    "VERIFIED",
+  );
+  expect(s.calls).toBe(0);
+  const event = (await db.list<any>("audit")).find(
+    (e) => e.actionId === s.action.id && e.type === "EXECUTION_DENIED",
+  );
+  expect(event.metadata.decision.allowed).toBe(false);
+  expect(event.previousState).toBe(event.nextState);
+  expect(event.metadata.phase).toBe("FINAL_RECHECK");
+});
