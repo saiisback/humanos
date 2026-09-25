@@ -41,6 +41,8 @@ export interface EffectAction {
 }
 export function createSideEffectClient(config: {
   baseUrl: string;
+  /** Exact private-network hostname opt-in; public transport should remain HTTPS. */
+  allowHttpHost?: string;
   secret: string;
   fetch?: typeof fetch;
   clock?: () => number;
@@ -52,7 +54,9 @@ export function createSideEffectClient(config: {
     base.protocol !== "https:" &&
     !(
       base.protocol === "http:" &&
-      ["localhost", "127.0.0.1"].includes(base.hostname)
+      (["localhost", "127.0.0.1"].includes(base.hostname) ||
+        (config.allowHttpHost !== undefined &&
+          base.hostname === config.allowHttpHost))
     )
   )
     throw new Error("HTTPS required for downstream service");

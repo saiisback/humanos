@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: humanos
+      POSTGRES_USER: humanos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - humanos-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U humanos]
+      interval: 5s
+      retries: 10
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://humanos:${POSTGRES_PASSWORD}@postgres:5432/humanos
+      HOST: 0.0.0.0
+      PORT: 3001
+      FLUE_URL: http://agent:3002
+      DEMO_SERVICE_URL: http://demo:3003
+      # Explicit private Compose-network exception; public services require HTTPS.
+      DEMO_SERVICE_ALLOW_HTTP_HOST: demo
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: [127.0.0.1:3001:3001]
+  agent:
+    build: .
+    command: [node, apps/agent/dist/server.mjs]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://humanos:${POSTGRES_PASSWORD}@postgres:5432/humanos
+      API_URL: http://api:3001
+      PORT: 3002
+      HOST: 0.0.0.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+  demo:
+    build: .
+    command: [pnpm, --filter, '@humanos/demo-service', exec, tsx, src/server.ts]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://humanos:${POSTGRES_PASSWORD}@postgres:5432/humanos
+      HOST: 0.0.0.0
+      PORT: 3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  humanos-db:

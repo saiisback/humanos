@@ -95,3 +95,27 @@ it("rejects wrong-kind reconciliation and empty effect identifiers", async () =>
     ).rejects.toThrow("RECONCILIATION_REQUIRED");
   }
 });
+it("permits only an explicitly configured private HTTP hostname", () => {
+  expect(() =>
+    createSideEffectClient({
+      baseUrl: "http://demo:3003",
+      secret: key,
+      allowHttpHost: "demo",
+    }),
+  ).not.toThrow();
+  for (const baseUrl of [
+    "http://example.com",
+    "http://demo.evil:3003",
+    "http://demo:3003",
+  ])
+    expect(() => createSideEffectClient({ baseUrl, secret: key })).toThrow(
+      "HTTPS required",
+    );
+  expect(() =>
+    createSideEffectClient({
+      baseUrl: "http://evil:3003",
+      secret: key,
+      allowHttpHost: "demo",
+    }),
+  ).toThrow("HTTPS required");
+});
