@@ -9,21 +9,32 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "dev": "pnpm --parallel -r --if-present dev",
+    "dev": "node scripts/dev.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:e2e": "playwright test",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:migrate": "pnpm --filter @humanos/api exec tsx ../../scripts/migrate.ts",
+    "test:contracts": "pnpm --filter @humanos/contracts test",
+    "calibrate": "pnpm --filter @humanos/api exec tsx ../../scripts/calibrate-jev.ts",
+    "scan": "node scripts/scan.mjs"
   },
   "devDependencies": {
     "@types/node": "22.15.30",
     "typescript": "5.8.3",
-    "vitest": "3.2.4",
+    "vitest": "4.1.11",
     "prettier": "3.5.3",
     "eslint": "9.28.0",
     "typescript-eslint": "8.33.1",
-    "@playwright/test": "1.52.0"
+    "@playwright/test": "1.63.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "hono": "4.13.8",
+      "@hono/node-server": "1.19.15",
+      "valibot": "1.5.0"
+    }
   }
 }

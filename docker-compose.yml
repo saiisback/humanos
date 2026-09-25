@@ -1,4 +1,10 @@
 services:
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    ports: [127.0.0.1:8080:80]
+    depends_on: [api]
   postgres:
     image: postgres:17
     environment:
@@ -40,7 +46,7 @@ services:
         condition: service_healthy
   demo:
     build: .
-    command: [pnpm, --filter, '@humanos/demo-service', exec, tsx, src/server.ts]
+    command: [pnpm, --filter, "@humanos/demo-service", exec, tsx, src/server.ts]
     env_file: .env
     environment:
       DATABASE_URL: postgresql://humanos:${POSTGRES_PASSWORD}@postgres:5432/humanos

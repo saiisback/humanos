@@ -1,4 +1,4 @@
-/** Run with pnpm exec tsx scripts/calibrate-jev.ts [--live]. No credentials => synthetic only. */
+/** Run with pnpm calibrate [--live]. No credentials => synthetic only. */
 import { readFile } from "node:fs/promises";
 import {
   hashCanonical,
@@ -12,8 +12,8 @@ import {
   JEV_THRESHOLDS,
 } from "../packages/models/src/index.js";
 const live = process.argv.includes("--live");
-if (live && !process.env.TYPESAFE_API_KEY)
-  throw new Error("Live calibration requires TYPESAFE_API_KEY");
+if (live && !process.env.JEV_API_KEY)
+  throw new Error("Live calibration requires JEV_API_KEY");
 const fixtures = (
   await readFile(
     new URL("../packages/models/evals/humanos-actions.jsonl", import.meta.url),
@@ -24,7 +24,7 @@ const fixtures = (
   .split("\n")
   .map((line) => JSON.parse(line));
 const client = live
-  ? createJevClient({ apiKey: process.env.TYPESAFE_API_KEY! })
+  ? createJevClient({ apiKey: process.env.JEV_API_KEY! })
   : null;
 const results = [];
 for (const fixture of fixtures) {

@@ -13,7 +13,7 @@
     "build": "tsc --outDir dist"
   },
   "dependencies": {
-    "valibot": "1.1.0",
+    "valibot": "1.5.0",
     "@noble/hashes": "1.8.0"
   }
 }

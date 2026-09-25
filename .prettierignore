@@ -4,3 +4,7 @@ dist
 .next
 packages/contracts/out
 packages/contracts/cache
+
+packages/contracts/lib
+playwright-report
+test-results
