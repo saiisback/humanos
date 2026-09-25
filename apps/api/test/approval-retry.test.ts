@@ -1,9 +1,11 @@
 import { beforeAll, afterAll, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
-import { Database } from "@humanos/database";
+import { Database, type ChallengeRecord } from "@humanos/database";
 import {
   hashCanonical,
   type Mission,
+  type Approval,
+  type AuditEvent,
   type ActionProposal,
   type WorldProofRequest,
 } from "@humanos/schemas";
@@ -128,7 +130,8 @@ it("refreshes expired challenge without replacing approval; old request cannot v
   expect(second.approval.bindingHash).toBe(first.approval.bindingHash);
   expect(second.request.requestId).not.toBe(first.request.requestId);
   expect(
-    (await db.get<any>("challenges", first.request.requestId)).consumedAt,
+    (await db.get<ChallengeRecord>("challenges", first.request.requestId))
+      ?.consumedAt,
   ).not.toBeNull();
   const verify = (r: WorldProofRequest) =>
     s.app.request(route + "/verify", {
@@ -139,9 +142,9 @@ it("refreshes expired challenge without replacing approval; old request cannot v
         proof: { nonce: r.rpContext.nonce },
       }),
     });
-  expect((await verify(first.request)).status).not.toBe(200);
-  expect((await verify(second.request)).status).toBe(200);
-  expect((await verify(second.request)).status).not.toBe(200);
+  expect((await verify(first.request))?.status).not.toBe(200);
+  expect((await verify(second.request))?.status).toBe(200);
+  expect((await verify(second.request))?.status).not.toBe(200);
 });
 it("refuses cancelled approval refresh and another session takeover", async () => {
   const s = await setup();
@@ -290,7 +293,8 @@ it("replaces a live legacy dynamic-scope challenge and serializes concurrent ref
   expect(refreshed[0].request.requestId).not.toBe(first.request.requestId);
   expect(refreshed[0].request.action).toBe("humanos-root");
   expect(
-    (await db.get<any>("challenges", first.request.requestId)).consumedAt,
+    (await db.get<ChallengeRecord>("challenges", first.request.requestId))
+      ?.consumedAt,
   ).not.toBeNull();
 });
 it.each(["DENIED", "CANCELLED", "CONSUMED", "VERIFIED"])(
@@ -309,9 +313,9 @@ it.each(["DENIED", "CANCELLED", "CONSUMED", "VERIFIED"])(
       (await s.app.request(route, { method: "POST", headers: s.headers }))
         .status,
     ).toBe(409);
-    expect((await db.get<any>("approvals", first.approval.id)).status).toBe(
-      status,
-    );
+    expect(
+      (await db.get<Approval>("approvals", first.approval.id))?.status,
+    ).toBe(status);
   },
 );
 it("audits cancellation/rejection and one concurrent expiry transition without payloads", async () => {
@@ -329,7 +333,7 @@ it("audits cancellation/rejection and one concurrent expiry transition without p
       })
     ).status,
   ).toBe(200);
-  const cancelled = (await db.list<any>("audit")).find(
+  const cancelled = (await db.list<AuditEvent>("audit")).find(
     (e) => e.missionId === s.mission.id && e.type === "APPROVAL_CANCELLED",
   );
   expect(cancelled).toMatchObject({
@@ -345,7 +349,7 @@ it("audits cancellation/rejection and one concurrent expiry transition without p
     ),
   );
   expect(responses.every((r) => r.status === 200)).toBe(true);
-  const events = (await db.list<any>("audit")).filter(
+  const events = (await db.list<AuditEvent>("audit")).filter(
     (e) => e.missionId === x.mission.id && e.type === "MISSION_EXPIRED",
   );
   expect(events).toHaveLength(1);
@@ -368,12 +372,103 @@ it("audits denied proof attempt without logging proof contents or consuming pend
       proof: { nonce: "PRIVATE_PROOF_DO_NOT_LOG" },
     }),
   });
-  const events = (await db.list<any>("audit")).filter(
+  const events = (await db.list<AuditEvent>("audit")).filter(
     (e) => e.actionId === s.action.id,
   );
   expect(events.some((e) => e.type === "WORLD_APPROVAL_DENIED")).toBe(true);
   expect(JSON.stringify(events)).not.toContain("PRIVATE_PROOF_DO_NOT_LOG");
-  expect((await db.get<any>("approvals", requested.approval.id)).status).toBe(
-    "PENDING",
+  expect(
+    (await db.get<Approval>("approvals", requested.approval.id))?.status,
+  ).toBe("PENDING");
+});
+it("cancels verified approval safely and refuses stale verified refresh", async () => {
+  const s = await setup();
+  const route = `/api/actions/${s.action.id}/approval`;
+  const first = await (
+    await s.app.request(route + "/request", {
+      method: "POST",
+      headers: s.headers,
+    })
+  ).json();
+  expect(
+    (
+      await s.app.request(route + "/verify", {
+        method: "POST",
+        headers: s.headers,
+        body: JSON.stringify({
+          requestId: first.request.requestId,
+          proof: { nonce: first.request.rpContext.nonce },
+        }),
+      })
+    ).status,
+  ).toBe(200);
+  await db.query(
+    "UPDATE approvals SET data=jsonb_set(data,'{verifiedAt}',to_jsonb($2::text)) WHERE id=$1",
+    [first.approval.id, new Date(Date.now() - 360000).toISOString()],
+  );
+  expect(
+    (
+      await s.app.request(route + "/request", {
+        method: "POST",
+        headers: s.headers,
+      })
+    ).status,
+  ).toBe(409);
+  expect(
+    (
+      await s.app.request(route + "/cancel", {
+        method: "POST",
+        headers: s.headers,
+      })
+    ).status,
+  ).toBe(200);
+  expect((await db.get<Approval>("approvals", first.approval.id))?.status).toBe(
+    "CANCELLED",
+  );
+  expect((await db.get<Mission>("missions", s.mission.id))?.state).toBe(
+    "REJECTED",
+  );
+  expect(
+    (
+      await s.app.request(route + "/cancel", {
+        method: "POST",
+        headers: s.headers,
+      })
+    ).status,
+  ).toBe(409);
+});
+it("returns conflict when cancelling a consumed approval without changing state", async () => {
+  const s = await setup();
+  const route = `/api/actions/${s.action.id}/approval`;
+  const first = await (
+    await s.app.request(route + "/request", {
+      method: "POST",
+      headers: s.headers,
+    })
+  ).json();
+  await s.app.request(route + "/verify", {
+    method: "POST",
+    headers: s.headers,
+    body: JSON.stringify({
+      requestId: first.request.requestId,
+      proof: { nonce: first.request.rpContext.nonce },
+    }),
+  });
+  await db.withLockedAction(s.action.id, (tx) =>
+    tx.consumeApproval(first.approval.id, new Date()),
+  );
+  expect(
+    (
+      await s.app.request(route + "/cancel", {
+        method: "POST",
+        headers: s.headers,
+      })
+    ).status,
+  ).toBe(409);
+  expect((await db.get<Approval>("approvals", first.approval.id))?.status).toBe(
+    "CONSUMED",
+  );
+  expect((await db.get<Mission>("missions", s.mission.id))?.state).toBe(
+    "RUNNING",
   );
 });

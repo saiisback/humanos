@@ -93,9 +93,12 @@ export class Transaction extends Repository {
     const now = Date.now();
     if (
       !current ||
-      current.status !== "PENDING" ||
+      !(
+        current.status === "PENDING" ||
+        (status === "CANCELLED" && current.status === "VERIFIED")
+      ) ||
       current.consumedAt !== null ||
-      Date.parse(current.binding.expiresAt) <= now
+      (status !== "CANCELLED" && Date.parse(current.binding.expiresAt) <= now)
     )
       throw new Error("APPROVAL_NOT_PENDING");
     if (
@@ -110,8 +113,12 @@ export class Transaction extends Repository {
     const next: Approval = {
       ...current,
       status,
-      verifiedAt: status === "VERIFIED" ? verification!.verifiedAt : null,
-      nullifierHash: status === "VERIFIED" ? verification!.nullifierHash : null,
+      verifiedAt:
+        status === "VERIFIED" ? verification!.verifiedAt : current.verifiedAt,
+      nullifierHash:
+        status === "VERIFIED"
+          ? verification!.nullifierHash
+          : current.nullifierHash,
     };
     validateEntity("approvals", next);
     await this.query("UPDATE approvals SET data=$2::jsonb WHERE id=$1", [

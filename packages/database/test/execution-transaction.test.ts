@@ -270,10 +270,10 @@ it("pending approvals verify once and cannot reset consumed or cancelled approva
     }),
   );
   expect(verified.status).toBe("VERIFIED");
+  await db.transaction((tx) => tx.consumeApproval("p4", new Date()));
   await expect(
     db.transaction((tx) => tx.updateApprovalStatus("p4", "CANCELLED")),
   ).rejects.toThrow();
-  await db.transaction((tx) => tx.consumeApproval("p4", new Date()));
   await expect(
     db.transaction((tx) =>
       tx.updateApprovalStatus("p4", "VERIFIED", {
@@ -293,5 +293,34 @@ it("sessions require valid expiry and root, challenges require valid expiry", as
   ).rejects.toThrow();
   await expect(
     db.insert("challenges", { id: "bad-challenge", expiresAt: "tomorrow" }),
+  ).rejects.toThrow();
+});
+
+it("allows cancellation of unconsumed verified approval even after expiry without reopening it", async () => {
+  const a = { ...action, id: "a-cancel", nonce: "n-cancel" };
+  await db.insert("actions", a);
+  const b = { ...binding, nonce: a.nonce, expiresAt: "2020-01-01T00:00:00Z" };
+  await db.insert("approvals", {
+    ...approval,
+    id: "p-cancel",
+    actionId: a.id,
+    binding: b,
+    bindingHash: hashCanonical(b),
+  });
+  const cancelled = await db.transaction((tx) =>
+    tx.updateApprovalStatus("p-cancel", "CANCELLED"),
+  );
+  expect(cancelled.status).toBe("CANCELLED");
+  expect(cancelled.verifiedAt).toBe(approval.verifiedAt);
+  await expect(
+    db.transaction((tx) => tx.consumeApproval("p-cancel", new Date())),
+  ).rejects.toThrow();
+  await expect(
+    db.transaction((tx) =>
+      tx.updateApprovalStatus("p-cancel", "VERIFIED", {
+        verifiedAt: new Date().toISOString(),
+        nullifierHash: hashCanonical("human"),
+      }),
+    ),
   ).rejects.toThrow();
 });

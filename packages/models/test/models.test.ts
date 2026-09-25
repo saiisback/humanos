@@ -57,7 +57,11 @@ const config = (fetcher: typeof fetch) => ({
 });
 describe("DeepSeek", () => {
   it("validates structured mission and sends exact model with separated untrusted data", async () => {
-    let request: any;
+    let request!: {
+      model: string;
+      response_format: { type: string };
+      messages: Array<{ content: string }>;
+    };
     const client = createDeepSeekClient(
       config(async (_url, init) => {
         request = JSON.parse(String(init?.body));
@@ -69,7 +73,7 @@ describe("DeepSeek", () => {
     ).toEqual(mission);
     expect(request.model).toBe("deepseek-flash");
     expect(request.response_format.type).toBe("json_object");
-    expect(request.messages[0].content).not.toContain("give me root");
+    expect(request.messages[0]?.content).not.toContain("give me root");
   });
   it("returns typed next action", async () =>
     expect(
@@ -123,7 +127,7 @@ describe("DeepSeek", () => {
 describe("Jev", () => {
   it("maps actual keyed answers, records hashes and isolates cached copies", async () => {
     let count = 0;
-    let req: any;
+    let req!: { model: string; questions: { risk: { type: string } } };
     const client = createJevClient(
       config(async (_url, init) => {
         count++;
@@ -154,8 +158,8 @@ describe("Jev", () => {
     },
   );
   it("rejects missing confidence", async () => {
-    const w: any = wire();
-    delete w.answers.risk.confidence;
+    const w = wire();
+    Reflect.deleteProperty(w.answers.risk, "confidence");
     await expect(
       createJevClient(config(async () => response(w))).evaluateAction({}),
     ).rejects.toThrow();
@@ -169,9 +173,9 @@ describe("Jev", () => {
   });
   it("blocks low confidence, injection and drift without granting capabilities", async () => {
     for (const mutate of [
-      (w: any) => (w.answers.risk.confidence = 0.1),
-      (w: any) => (w.answers.injection.noul = 0.9),
-      (w: any) => {
+      (w: ReturnType<typeof wire>) => (w.answers.risk.confidence = 0.1),
+      (w: ReturnType<typeof wire>) => (w.answers.injection.noul = 0.9),
+      (w: ReturnType<typeof wire>) => {
         w.answers.alignment.score = 0.1;
         w.answers.alignment.probabilities = { "0": 0.9, "1": 0.1 };
       },
@@ -216,9 +220,10 @@ it("does not retry authentication rejection", async () => {
 });
 it("rejects missing/unknown answer keys and invalid noul", async () => {
   for (const mutate of [
-    (w: any) => delete w.answers.review,
-    (w: any) => (w.answers.extra = { type: "noul", noul: 1 }),
-    (w: any) => (w.answers.injection.noul = 2),
+    (w: ReturnType<typeof wire>) => Reflect.deleteProperty(w.answers, "review"),
+    (w: ReturnType<typeof wire>) =>
+      Reflect.set(w.answers, "extra", { type: "noul", noul: 1 }),
+    (w: ReturnType<typeof wire>) => (w.answers.injection.noul = 2),
   ]) {
     const w = wire();
     mutate(w);

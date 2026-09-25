@@ -672,9 +672,20 @@ export function createApi(config: ApiConfig) {
       const p = (await tx.list<Approval>("approvals")).find(
         (p) => p.actionId === a.id,
       );
-      if (p) await tx.updateApprovalStatus(p.id, "CANCELLED");
       const m = await tx.get<Mission>("missions", a.missionId);
       if (!m) throw new HttpError(404, "NOT_FOUND");
+      if (
+        !["RUNNING", "AWAITING_APPROVAL"].includes(m.state) ||
+        (p &&
+          (!["PENDING", "VERIFIED"].includes(p.status) ||
+            p.consumedAt !== null))
+      )
+        throw new HttpError(
+          409,
+          "CONFLICT",
+          "This action can no longer be cancelled.",
+        );
+      if (p) await tx.updateApprovalStatus(p.id, "CANCELLED");
       const next = {
         ...m,
         state: transition(m.state, "REJECT"),

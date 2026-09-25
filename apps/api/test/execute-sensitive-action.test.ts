@@ -4,6 +4,7 @@ import { Database } from "@humanos/database";
 import {
   hashCanonical,
   type Mission,
+  type AuditEvent,
   type ActionProposal,
   type Approval,
   type AgentAuthorization,
@@ -226,7 +227,7 @@ it("reconciliation advances mission and appends audit", async () => {
   expect((await db.get<Mission>("missions", s.mission.id))?.state).toBe(
     "RUNNING",
   );
-  const events = (await db.list<any>("audit")).filter(
+  const events = (await db.list<AuditEvent>("audit")).filter(
     (e) => e.actionId === s.action.id,
   );
   expect(events.map((e) => e.type)).toContain("RECONCILED");
@@ -276,7 +277,7 @@ it("ENS update failure commits effect once and retries only receipt commitment",
     readAuthorization: s.auth,
     evaluate: s.evaluate,
     effect: s.effect,
-    updateEnsReceipt: async (input: any) => {
+    updateEnsReceipt: async (input) => {
       hashes.push(input.receiptHash);
       if (++updates === 1) throw new Error("chain unavailable");
     },
@@ -290,7 +291,7 @@ it("ENS update failure commits effect once and retries only receipt commitment",
   expect(s.calls).toBe(1);
   expect(new Set(hashes).size).toBe(1);
   expect(
-    (await db.list<any>("audit")).some(
+    (await db.list<AuditEvent>("audit")).some(
       (e) => e.actionId === s.action.id && e.type === "ENS_UPDATE_PENDING",
     ),
   ).toBe(true);
@@ -344,15 +345,15 @@ it("persists final policy and assessment summary without free text or personal p
     effect: s.effect,
   });
   await execute(s.action.id);
-  const event = (await db.list<any>("audit")).find(
+  const event = (await db.list<AuditEvent>("audit")).find(
     (e) => e.actionId === s.action.id && e.type === "EXECUTION_AUTHORIZED",
   );
-  expect(event.metadata.decision).toMatchObject({
+  expect(event?.metadata.decision).toMatchObject({
     allowed: true,
     risk: "SENSITIVE",
     requiresApproval: true,
   });
-  expect(event.metadata.assessment).toMatchObject({
+  expect(event?.metadata.assessment).toMatchObject({
     confidence: 0.99,
     missionAligned: true,
     injectionDetected: false,
@@ -377,10 +378,10 @@ it("persists denial after rollback without consuming approval or invoking effect
     "VERIFIED",
   );
   expect(s.calls).toBe(0);
-  const event = (await db.list<any>("audit")).find(
+  const event = (await db.list<AuditEvent>("audit")).find(
     (e) => e.actionId === s.action.id && e.type === "EXECUTION_DENIED",
   );
-  expect(event.metadata.decision.allowed).toBe(false);
-  expect(event.previousState).toBe(event.nextState);
-  expect(event.metadata.phase).toBe("FINAL_RECHECK");
+  expect(event?.metadata.decision).toMatchObject({ allowed: false });
+  expect(event?.previousState).toBe(event?.nextState);
+  expect(event?.metadata.phase).toBe("FINAL_RECHECK");
 });
