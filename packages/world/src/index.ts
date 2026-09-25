@@ -159,7 +159,9 @@ export function createWorldVerifier(config: WorldConfig) {
       if (!response.ok)
         throw new WorldVerificationError(
           "World verification failed",
-          response.status >= 500 ? "unavailable" : "invalid_proof",
+          response.status === 429 || response.status >= 500
+            ? "unavailable"
+            : "invalid_proof",
         );
       let result: Record<string, unknown>;
       try {

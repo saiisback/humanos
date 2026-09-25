@@ -137,6 +137,18 @@ describe("official World verification boundary", () => {
     });
     expect(new WorldVerificationError().reason).toBe("invalid_proof");
   });
+  it.each([429, 502, 503, 504])(
+    "treats upstream HTTP %i as unavailable",
+    async (status) => {
+      const verifier = createWorldVerifier({
+        ...config,
+        fetch: async () => new Response(null, { status }),
+      });
+      await expect(
+        verifier.verify(request, await sample()),
+      ).rejects.toMatchObject({ reason: "unavailable" });
+    },
+  );
   it("rejects wrong signal, expired challenge, legacy and wrong human", async () => {
     const v = createWorldVerifier({
       ...config,

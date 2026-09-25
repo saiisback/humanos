@@ -11,7 +11,7 @@ import {
   type WorldProofRequest,
 } from "@humanos/schemas";
 import { createApi, type ApiConfig } from "../src/app.js";
-import { approvalBinding } from "@humanos/world";
+import { approvalBinding, WorldVerificationError } from "@humanos/world";
 const db = new Database(
   process.env.TEST_DATABASE_URL ??
     "postgresql://saikarthik@127.0.0.1:55432/humanos",
@@ -203,6 +203,120 @@ it("approves against durable nullifier after logout and SIWE root restoration", 
   expect(JSON.stringify(await db.list("audit"))).not.toContain(
     "PRIVATE_PROOF_DO_NOT_LOG",
   );
+});
+it.each([
+  ["invalid_proof", 403, "INVALID_PROOF"],
+  ["unavailable", 503, "INTEGRATION_UNAVAILABLE"],
+] as const)(
+  "maps approval World %s after recording denial",
+  async (reason, status, code) => {
+    const s = await setup();
+    const route = `/api/actions/${s.action.id}/approval`;
+    const requested = await s.app.request(`${route}/request`, {
+      method: "POST",
+      headers: s.headers,
+    });
+    expect(requested.status).toBe(200);
+    const { request, approval } = await requested.json();
+    const failing = createApi({
+      db,
+      origin: "http://localhost:5173",
+      world: {
+        ...world,
+        async verify() {
+          throw new WorldVerificationError("fixture failure", reason);
+        },
+      },
+    });
+    const response = await failing.request(`${route}/verify`, {
+      method: "POST",
+      headers: s.headers,
+      body: JSON.stringify({
+        requestId: request.requestId,
+        proof: {
+          nonce: request.rpContext.nonce,
+          secret: "PRIVATE_PROOF_DO_NOT_LOG",
+        },
+      }),
+    });
+    expect(response.status).toBe(status);
+    expect((await response.json()).error.code).toBe(code);
+    expect((await db.get<Approval>("approvals", approval.id))?.status).toBe(
+      "PENDING",
+    );
+    expect(
+      (await db.get<ChallengeRecord>("challenges", request.requestId))
+        ?.consumedAt,
+    ).toBeNull();
+    const audit = (await db.list<AuditEvent>("audit")).filter(
+      (event) => event.actionId === s.action.id,
+    );
+    expect(audit.map((event) => event.type)).toContain("WORLD_APPROVAL_DENIED");
+    expect(JSON.stringify(audit)).not.toContain("PRIVATE_PROOF_DO_NOT_LOG");
+  },
+);
+it("refuses approval if the account binding changes during World verification", async () => {
+  const s = await setup();
+  const route = `/api/actions/${s.action.id}/approval`;
+  const requested = await s.app.request(`${route}/request`, {
+    method: "POST",
+    headers: s.headers,
+  });
+  expect(requested.status).toBe(200);
+  const { request, approval } = await requested.json();
+  let entered!: () => void;
+  let release!: () => void;
+  const providerEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const providerGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const delayed = createApi({
+    db,
+    origin: "http://localhost:5173",
+    world: {
+      ...world,
+      async verify(expected, proof) {
+        entered();
+        await providerGate;
+        return world.verify(expected, proof);
+      },
+    },
+  });
+  const pending = delayed.request(`${route}/verify`, {
+    method: "POST",
+    headers: s.headers,
+    body: JSON.stringify({
+      requestId: request.requestId,
+      proof: { nonce: request.rpContext.nonce },
+    }),
+  });
+  await providerEntered;
+  const otherRootId = randomUUID();
+  await db.insert("roots", {
+    id: otherRootId,
+    ensName: null,
+    createdAt: new Date().toISOString(),
+    verificationEnvironment: "staging",
+  });
+  await db.query(
+    "UPDATE root_bindings SET data=jsonb_set(data,'{rootId}',to_jsonb($2::text)) WHERE account_id=$1",
+    [s.accountId, otherRootId],
+  );
+  release();
+  const response = await pending;
+  expect(response.status).toBe(403);
+  expect((await response.json()).error.code).toBe(
+    "HUMAN_VERIFICATION_REQUIRED",
+  );
+  expect((await db.get<Approval>("approvals", approval.id))?.status).toBe(
+    "PENDING",
+  );
+  expect(
+    (await db.get<ChallengeRecord>("challenges", request.requestId))
+      ?.consumedAt,
+  ).toBeNull();
 });
 it("refreshes expired challenge without replacing approval; old request cannot verify", async () => {
   const s = await setup();

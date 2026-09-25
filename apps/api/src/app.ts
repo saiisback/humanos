@@ -599,7 +599,12 @@ export function createApi(config: ApiConfig) {
         if (currentSession.rootId && currentSession.rootId !== root.id)
           throw new HttpError(409, "ROOT_ACCOUNT_CONFLICT");
         await tx.bindRootAccount(root.id, s.accountId, new Date());
-        await tx.consumeChallenge(challenge.id, new Date());
+        const linkedAt = new Date();
+        if (Date.parse(currentSession.expiresAt) <= linkedAt.getTime())
+          throw new HttpError(401, "UNAUTHENTICATED");
+        if (Date.parse(currentChallenge.expiresAt) <= linkedAt.getTime())
+          throw new HttpError(403, "INVALID_CHALLENGE");
+        await tx.consumeChallenge(challenge.id, linkedAt);
         await tx.put("sessions", { ...currentSession, rootId: root.id });
         return { root, account };
       }));
@@ -973,6 +978,11 @@ export function createApi(config: ApiConfig) {
             tx,
           );
       });
+      if (
+        error instanceof WorldVerificationError &&
+        error.reason === "invalid_proof"
+      )
+        throw new HttpError(403, "INVALID_PROOF");
       throw error;
     }
     const next = await db.withLockedAction(a.id, async (tx) => {

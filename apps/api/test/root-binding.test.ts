@@ -283,6 +283,104 @@ it("refuses an expired challenge after provider verification without changing th
   expect(await db.get("nullifiers", hashCanonical("human eleven"))).toBeNull();
 });
 
+it.each(["session", "challenge"] as const)(
+  "rolls back a root claim when the %s expires while waiting for the root lock",
+  async (expiring) => {
+    const seed = expiring === "session" ? 12 : 13;
+    const user = await signedIn(seed);
+    const human = `root-lock-human-${expiring}`;
+    const rootId = randomUUID();
+    await db.insert("roots", {
+      id: rootId,
+      ensName: null,
+      createdAt: new Date().toISOString(),
+      verificationEnvironment: "staging",
+    });
+    await db.insert("nullifiers", { id: hashCanonical(human), rootId });
+    const issued = await request(user.cookie);
+    const expiresAt = new Date(Date.now() + 2500).toISOString();
+    await db.query(
+      `UPDATE ${expiring === "session" ? "sessions" : "challenges"} SET data=jsonb_set(data,'{expiresAt}',to_jsonb($2::text)) WHERE id=$1`,
+      [
+        expiring === "session"
+          ? hashCanonical(user.token)
+          : issued.body.requestId,
+        expiresAt,
+      ],
+    );
+    let release!: () => void;
+    let locked!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rootLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const holder = db.transaction(async (tx) => {
+      await tx.query("SELECT id FROM roots WHERE id=$1 FOR UPDATE", [rootId]);
+      locked();
+      await gate;
+    });
+    await rootLocked;
+    const pending = verify(
+      issued.body.requestId,
+      issued.body.rpContext.nonce,
+      user.cookie,
+      issued.challengeCookie,
+      human,
+    );
+    try {
+      let waiting = false;
+      while (Date.now() < Date.parse(expiresAt) - 200) {
+        const row = await db.query(
+          "SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query='SELECT id FROM roots WHERE id=$1 FOR UPDATE' LIMIT 1",
+        );
+        if (row.rowCount) {
+          waiting = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(
+        waiting,
+        "verification must reach the root row lock before expiry",
+      ).toBe(true);
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.max(0, Date.parse(expiresAt) - Date.now() + 50),
+        ),
+      );
+    } finally {
+      release();
+      await holder;
+    }
+    const response = await pending;
+    expect(response.status).toBe(expiring === "session" ? 401 : 403);
+    expect((await response.json()).error.code).toBe(
+      expiring === "session" ? "UNAUTHENTICATED" : "INVALID_CHALLENGE",
+    );
+    expect(
+      (await db.get<SessionRecord>("sessions", hashCanonical(user.token)))
+        ?.rootId,
+    ).toBeNull();
+    expect(
+      (await db.list<RootAccountBinding>("root_bindings")).filter(
+        (binding) => binding.accountId === user.accountId,
+      ),
+    ).toHaveLength(0);
+    expect(
+      (
+        await db.get<{ consumedAt: string | null }>(
+          "challenges",
+          issued.body.requestId,
+        )
+      )?.consumedAt,
+    ).toBeNull();
+  },
+  10000,
+);
+
 it("binds a concurrent first nullifier claim to exactly one account", async () => {
   const uniqueHash = hashCanonical(randomUUID());
   const concurrent = createApi({
