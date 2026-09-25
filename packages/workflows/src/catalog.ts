@@ -3,6 +3,7 @@ import type { BlockType, Capability, ExecutorKind } from "@humanos/schemas";
 import { ContentBriefSchema, GeneratedContentSchema } from "@humanos/schemas";
 
 export type EffectClass = "pure" | "read" | "reversible_write" | "irreversible_write";
+export type BindingKind = "string" | "number" | "boolean" | "array" | "object";
 export interface BlockDefinition {
   type: BlockType;
   version: `${number}.${number}.${number}`;
@@ -13,6 +14,8 @@ export interface BlockDefinition {
   capability: Capability | null;
   requiresConfirmation: boolean;
   outputVariants?: Readonly<Record<string, readonly string[]>>;
+  inputBindingKinds?: Readonly<Record<string, BindingKind>>;
+  outputBindingKinds?: Readonly<Record<string, BindingKind>>;
 }
 
 export class BlockRegistry {
@@ -56,8 +59,38 @@ const defs: BlockDefinition[] = [
   { type: "calendar.create", version: "1.0.0", executor: "connector", effect: "reversible_write", input: v.strictObject({ title: text, startsAt: v.pipe(v.string(), v.isoTimestamp()), endsAt: v.pipe(v.string(), v.isoTimestamp()) }), output: v.strictObject({ eventId: short }), capability: "calendar.create", requiresConfirmation: true },
 ];
 
+// Public binding metadata describes whole top-level fields. The graph validator
+// checks field existence and ancestry; the assembler checks kind compatibility.
+const bindingKinds: Readonly<Record<BlockType, {
+  input: Readonly<Record<string, BindingKind>>;
+  output: Readonly<Record<string, BindingKind>>;
+}>> = {
+  "research.web": { input: { query: "string" }, output: { sources: "array" } },
+  "extract.structured": { input: { sourceRef: "string", fieldNames: "array" }, output: { fields: "object" } },
+  "browser.navigate": { input: { url: "string" }, output: { pageId: "string", finalUrl: "string" } },
+  "browser.extract": { input: { pageId: "string", fieldNames: "array" }, output: { fields: "object" } },
+  "browser.fill": { input: { pageId: "string", fields: "object" }, output: { previewHash: "string" } },
+  "browser.submit": { input: { destination: "string", payload: "object" }, output: { receiptId: "string" } },
+  "connector.call": { input: { connectorId: "string", operationId: "string", arguments: "object" }, output: { receiptId: "string" } },
+  "content.generate": { input: { brief: "object" }, output: { outputSchema: "string", text: "string", subject: "string", body: "string", fields: "object" } },
+  "content.transform": { input: { brief: "object", sourceRef: "string" }, output: { outputSchema: "string", text: "string", subject: "string", body: "string", fields: "object" } },
+  "control.wait": { input: { until: "string" }, output: {} },
+  "control.branch": { input: { valueRef: "string", equals: "string" }, output: { selected: "boolean" } },
+  "control.join": { input: {}, output: {} },
+  "human.connect": { input: { connectorId: "string" }, output: { connected: "boolean" } },
+  "human.confirm": { input: {}, output: { confirmed: "boolean" } },
+  "human.input": { input: { prompt: "string" }, output: { value: "string" } },
+  "schedule.once": { input: { fireAt: "string", timezone: "string" }, output: { occurrenceId: "string" } },
+  "schedule.recurring": { input: { expression: "string", timezone: "string" }, output: { occurrenceId: "string" } },
+  "application.submit": { input: { applicationId: "string", payload: "object" }, output: { receiptId: "string" } },
+  "calendar.create": { input: { title: "string", startsAt: "string", endsAt: "string" }, output: { eventId: "string" } },
+};
+
 export function createDefaultCatalog(): BlockRegistry {
   const catalog = new BlockRegistry();
-  for (const definition of defs) catalog.register(definition);
+  for (const definition of defs) {
+    const kinds = bindingKinds[definition.type];
+    catalog.register({ ...definition, inputBindingKinds: kinds.input, outputBindingKinds: kinds.output });
+  }
   return catalog;
 }

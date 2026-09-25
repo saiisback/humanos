@@ -112,6 +112,29 @@ it("selects only offered parameter values using opaque option IDs", async () => 
   });
   expect(selected.parameters).toEqual({ length: 200 });
 });
+it("projects bounded block history into both Jev requests and accepts safe dotted parameter paths", async () => {
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(answer())))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-1.13", answers: { p0: choice("o0", ["o0", "o1"]) } })));
+  const result = await createWorkflowSelector({ apiKey: "secret", fetch: fetcher }).select({
+    ...input,
+    history: ["research.web"],
+    candidates: [{ ...input.candidates[0]!, parameterOptions: { "brief.outputSchema": ["text", "email"] } }],
+  });
+  expect(result.parameters).toEqual({ "brief.outputSchema": "text" });
+  for (const call of fetcher.mock.calls) {
+    const body = JSON.parse(String((call[1] as RequestInit).body));
+    expect(body.state.history).toEqual(["research.web"]);
+  }
+});
+it("rejects prototype parameter paths before sending to Jev", async () => {
+  const settings = config(answer());
+  await expect(createWorkflowSelector(settings).select({
+    ...input,
+    candidates: [{ ...input.candidates[0]!, parameterOptions: { "brief.__proto__": ["text"] } }],
+  })).rejects.toThrow("Model integration unavailable");
+  expect(settings.fetch).not.toHaveBeenCalled();
+});
 it("keeps descriptions, IDs, and arbitrary option strings out of both Jev requests", async () => {
   const fetcher = vi
     .fn()

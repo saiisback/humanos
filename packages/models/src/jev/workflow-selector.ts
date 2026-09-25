@@ -86,7 +86,9 @@ function optionsFor(
   if (entries.length > 16) throw new Error();
   for (const [name, options] of entries) {
     if (
-      !/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(name) ||
+      name.length > 64 || name.split(".").some((part) =>
+        !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(part) ||
+        ["__proto__", "constructor", "prototype"].includes(part)) ||
       !Array.isArray(options) ||
       options.length < 1 ||
       options.length > 32 ||
@@ -145,6 +147,7 @@ export function createWorkflowSelector(
           goal: snapshot.goal,
           stateHash: snapshot.stateHash,
           turn: snapshot.turn,
+          history: snapshot.history ?? [],
           candidates: snapshot.candidates.map((candidate, i) => ({
             id: wireKeys[i],
             type: candidate.type,
@@ -218,6 +221,7 @@ export function createWorkflowSelector(
               goal: snapshot.goal,
               stateHash: snapshot.stateHash,
               turn: snapshot.turn,
+              history: snapshot.history ?? [],
               candidate: { id: selected.choice, type: selectedCandidate.type },
               parameters: entries.map(([, values], i) => ({
                 id: `p${i}`,
