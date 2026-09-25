@@ -13,6 +13,8 @@ import {
   RootIdentitySchema,
   TimestampSchema,
   WalletAccountSchema,
+  JawPermissionGrantSchema,
+  JawPermissionReviewSchema,
 } from "./domain.js";
 import { AuditEventSchema } from "./events.js";
 export const ReadinessSchema = v.strictObject({
@@ -85,7 +87,18 @@ export const MissionDetailResponseSchema = v.strictObject({
   events: v.array(AuditEventSchema),
   assessment: v.nullable(JevAssessmentSchema),
   decision: v.nullable(PolicyDecisionSchema),
+  permissionReviews: v.optional(v.array(JawPermissionReviewSchema)),
+  permissionGrants: v.optional(v.array(JawPermissionGrantSchema)),
 });
+export const RecordJawPermissionSchema = v.strictObject({
+  grant: JawPermissionGrantSchema,
+});
+export const JawPermissionListResponseSchema = v.strictObject({
+  grants: v.array(JawPermissionGrantSchema),
+});
+export type JawPermissionListResponse = v.InferOutput<
+  typeof JawPermissionListResponseSchema
+>;
 export type MissionDetailResponse = v.InferOutput<
   typeof MissionDetailResponseSchema
 >;

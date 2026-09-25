@@ -116,25 +116,116 @@ export const RootAccountBindingSchema = v.strictObject({
   createdAt: TimestampSchema,
 });
 export type RootAccountBinding = v.InferOutput<typeof RootAccountBindingSchema>;
-export const JawPermissionGrantSchema = v.strictObject({
-  id: IdSchema,
-  accountId: IdSchema,
-  chainId: ChainIdSchema,
-  permissionId: IdSchema,
-  status: v.picklist(["ACTIVE", "REVOKED", "EXPIRED"]),
-  targets: v.array(WalletAddressSchema),
-  functions: v.array(v.string()),
-  spends: v.array(
-    v.strictObject({
-      token: WalletAddressSchema,
-      allowance: v.string(),
-      period: v.string(),
-    }),
+export const Uint160DecimalSchema = v.pipe(
+  v.string(),
+  v.maxLength(49),
+  v.regex(/^(0|[1-9][0-9]*)$/),
+  v.check((value) => BigInt(value) < 2n ** 160n),
+);
+export const Uint48Schema = v.pipe(
+  v.number(),
+  v.integer(),
+  v.minValue(0),
+  v.maxValue(2 ** 48 - 1),
+);
+const ExactAddressSchema = v.pipe(
+  WalletAddressSchema,
+  v.check(
+    (value) =>
+      value !== "0x0000000000000000000000000000000000000000" &&
+      value !== "0x3232323232323232323232323232323232323232",
   ),
+);
+export const JawCallSchema = v.strictObject({
+  target: ExactAddressSchema,
+  selector: v.pipe(
+    v.string(),
+    v.regex(/^0x[0-9a-f]{8}$/),
+    v.check((value) => value !== "0x32323232"),
+  ),
+});
+export const JawSpendSchema = v.strictObject({
+  token: ExactAddressSchema,
+  allowance: Uint160DecimalSchema,
+  unit: v.picklist(["minute", "hour", "day", "week", "month", "forever"]),
+  multiplier: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65535)),
+});
+const jawConstraintEntries = {
+  missionId: IdSchema,
+  accountId: IdSchema,
+  account: ExactAddressSchema,
+  chainId: v.literal(11155111),
+  spender: ExactAddressSchema,
+  calls: v.pipe(
+    v.array(JawCallSchema),
+    v.minLength(1),
+    v.maxLength(32),
+    v.check(
+      (calls) =>
+        new Set(calls.map((call) => `${call.target}:${call.selector}`)).size ===
+        calls.length,
+    ),
+  ),
+  spends: v.pipe(
+    v.array(JawSpendSchema),
+    v.maxLength(32),
+    v.check(
+      (spends) =>
+        new Set(spends.map((spend) => spend.token)).size === spends.length,
+    ),
+  ),
+  start: Uint48Schema,
+  end: Uint48Schema,
   expiresAt: TimestampSchema,
   createdAt: TimestampSchema,
-  revokedAt: v.nullable(TimestampSchema),
-});
+};
+function validJawContext(value: {
+  accountId: string;
+  account: string;
+  chainId: number;
+  start: number;
+  end: number;
+  expiresAt: string;
+}) {
+  return (
+    value.accountId === `${value.chainId}:${value.account}` &&
+    value.start < value.end &&
+    Date.parse(value.expiresAt) === value.end * 1000
+  );
+}
+// The SDK selects start/salt itself. Review.start is the earliest permitted SDK start.
+export const JawPermissionReviewSchema = v.pipe(
+  v.strictObject({ id: IdSchema, ...jawConstraintEntries }),
+  v.check((value) => validJawContext(value)),
+);
+export type JawPermissionReview = v.InferOutput<
+  typeof JawPermissionReviewSchema
+>;
+export const JawPermissionGrantSchema = v.pipe(
+  v.strictObject({
+    ...jawConstraintEntries,
+    id: HexSchema,
+    reviewId: IdSchema,
+    permissionId: HexSchema,
+    salt: v.pipe(v.string(), v.regex(/^0x[0-9a-f]{1,64}$/)),
+    status: v.picklist([
+      "UNVERIFIED",
+      "ACTIVE",
+      "REVOKED",
+      "EXPIRED",
+      "RECONCILIATION_REQUIRED",
+    ]),
+    revokedAt: v.nullable(TimestampSchema),
+  }),
+  v.check((value) => validJawContext(value)),
+  v.check(
+    (value) =>
+      value.id === value.permissionId &&
+      (value.status === "REVOKED"
+        ? value.revokedAt !== null
+        : value.revokedAt === null),
+  ),
+);
 export type JawPermissionGrant = v.InferOutput<typeof JawPermissionGrantSchema>;
 export const MissionProposalSchema = v.strictObject({
   goal: v.pipe(v.string(), v.minLength(1), v.maxLength(10000)),

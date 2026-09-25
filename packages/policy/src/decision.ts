@@ -16,6 +16,7 @@ import {
 } from "@humanos/schemas";
 import { effectiveCapabilities } from "./capabilities.js";
 import { classifyStatic, maximumRisk } from "./risk.js";
+import { authorizeOnchain, type OnchainAuthority } from "./jaw-permissions.js";
 export const POLICY_VERSION = "humanos-policy-v1";
 export interface AuthorizeInput {
   action: ActionProposal;
@@ -29,6 +30,7 @@ export interface AuthorizeInput {
   maxAuthorizationAgeMs?: number;
   maxAssessmentAgeMs?: number;
   maxApprovalAgeMs?: number;
+  onchain?: OnchainAuthority | undefined;
 }
 export function approvalBinding(a: ActionProposal): ApprovalBinding {
   return {
@@ -81,6 +83,16 @@ export function authorize(input: AuthorizeInput): PolicyDecision {
       return deny("ACTION_EXPIRED_OR_INVALID");
     if (hashCanonical(a.payload) !== a.payloadHash)
       return deny("PAYLOAD_HASH_MISMATCH");
+    if (a.type === "TRANSFER_VALUE") {
+      if (!input.onchain) return deny("JAW_PERMISSION_UNAVAILABLE");
+      const reason = authorizeOnchain({
+        ...input.onchain,
+        missionId: m.id,
+        effect: a.payload,
+        now,
+      });
+      if (reason) return deny(reason);
+    }
     if (!j || !v.safeParse(JevAssessmentSchema, j).success)
       return deny("ASSESSMENT_UNAVAILABLE");
     if (

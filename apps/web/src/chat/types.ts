@@ -5,6 +5,8 @@ import type {
   JevAssessment,
   Mission,
   PolicyDecision,
+  JawPermissionReview,
+  JawPermissionGrant,
 } from "@humanos/schemas";
 
 export type TranscriptItem =
@@ -14,6 +16,13 @@ export type TranscriptItem =
   | { kind: "identity"; id: string; text: string; verified: boolean }
   | { kind: "mandate"; id: string; mission: Mission }
   | { kind: "ens"; id: string; name: string; expiresAt: string }
+  | {
+      kind: "permission";
+      id: string;
+      review: JawPermissionReview;
+      grant: JawPermissionGrant | null;
+      enabled: boolean;
+    }
   | {
       kind: "approval";
       id: string;

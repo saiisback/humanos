@@ -35,7 +35,7 @@ export interface JawAuthClient {
   disconnect(): Promise<void>;
 }
 
-interface RequestProvider {
+export interface RequestProvider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 }
 
@@ -159,6 +159,10 @@ export function createJawAuthClient(
 }
 
 let browserClient: JawAuthClient | null = null;
+let browserProvider: RequestProvider | null = null;
+export function getBrowserJawProvider(): RequestProvider | null {
+  return browserProvider;
+}
 export function createBrowserJawAuthClient(
   apiKey: string,
   logoUrl?: string,
@@ -180,9 +184,10 @@ export function createBrowserJawAuthClient(
       }
     }
     const jaw = JAW.create(options);
-    browserClient = createJawAuthClient(
-      { request: (args) => jaw.provider.request(args) },
-      () => jaw.disconnect(),
+    // Resolve wrapper.provider on every request, including after disconnect.
+    browserProvider = { request: (args) => jaw.provider.request(args) };
+    browserClient = createJawAuthClient(browserProvider, () =>
+      jaw.disconnect(),
     );
   }
   return browserClient;

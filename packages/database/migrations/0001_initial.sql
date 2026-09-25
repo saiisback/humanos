@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS nullifiers (id text PRIMARY KEY, data jsonb NOT NULL,
 CREATE TABLE IF NOT EXISTS sessions (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS account_id text GENERATED ALWAYS AS (data->>'accountId') STORED REFERENCES accounts(id);
 CREATE TABLE IF NOT EXISTS missions (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS jaw_reviews (id text PRIMARY KEY, data jsonb NOT NULL, mission_id text GENERATED ALWAYS AS (data->>'missionId') STORED NOT NULL REFERENCES missions(id), account_id text GENERATED ALWAYS AS (data->>'accountId') STORED NOT NULL REFERENCES accounts(id), created_at timestamptz NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS jaw_permissions_id_unique ON jaw_permissions ((data->>'permissionId'));
 CREATE TABLE IF NOT EXISTS agents (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS actions (id text PRIMARY KEY, data jsonb NOT NULL, mission_id text GENERATED ALWAYS AS (data->>'missionId') STORED REFERENCES missions(id), created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS approvals (id text PRIMARY KEY, data jsonb NOT NULL, action_id text GENERATED ALWAYS AS (data->>'actionId') STORED REFERENCES actions(id), binding_hash text GENERATED ALWAYS AS (data->>'bindingHash') STORED UNIQUE NOT NULL, created_at timestamptz NOT NULL DEFAULT now());

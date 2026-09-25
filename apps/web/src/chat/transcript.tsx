@@ -1,5 +1,9 @@
 import type { Capability } from "@humanos/schemas";
 import type { TranscriptItem } from "./types";
+import {
+  PermissionReview,
+  type JawPermissionClient,
+} from "../permissions/permission-review";
 
 const label = (value: string) =>
   value.toLowerCase().replaceAll("_", " ").replaceAll(".", " ");
@@ -28,17 +32,30 @@ export function Transcript({
   capabilities,
   setCapabilities,
   actions,
+  permissionClient,
+  onPermissionRecorded,
 }: {
   items: TranscriptItem[];
   busy: boolean;
   capabilities: Capability[];
   setCapabilities: (value: Capability[]) => void;
   actions: TranscriptActions;
+  permissionClient?: JawPermissionClient | undefined;
+  onPermissionRecorded?: (() => Promise<void>) | undefined;
 }) {
   return (
     <ol className="transcript" aria-label="Mission conversation">
       {items.map((item) => (
         <li key={item.id} className={`transcript-item transcript-${item.kind}`}>
+          {item.kind === "permission" && (
+            <PermissionReview
+              review={item.review}
+              grant={item.grant}
+              enabled={item.enabled && !busy}
+              client={permissionClient}
+              onRecorded={onPermissionRecorded}
+            />
+          )}
           {item.kind === "human" && (
             <div className="human-message">
               <p>{item.text}</p>

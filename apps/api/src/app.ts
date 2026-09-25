@@ -25,6 +25,9 @@ import {
   type MissionProposal,
   type ActionProposalDraft,
   type WalletAccount,
+  type JawPermissionReview,
+  type JawPermissionGrant,
+  type JawPermissionVerifier,
 } from "@humanos/schemas";
 import {
   authorize,
@@ -43,6 +46,10 @@ import {
   type ExecutionDependencies,
 } from "./services/execute-sensitive-action.js";
 import { isSiweVerificationError, type SiweVerifier } from "./services/siwe.js";
+import {
+  createPermissionService,
+  PermissionError,
+} from "./services/jaw-permissions.js";
 export interface EnsAdapter {
   register: (mission: Mission, rootOwner: string) => Promise<string>;
   revoke: (mission: Mission) => Promise<void>;
@@ -52,6 +59,7 @@ export interface ApiConfig {
   db: Database;
   origin: string;
   siweVerifier?: SiweVerifier;
+  jawPermissionVerifier?: JawPermissionVerifier;
   world?: ReturnType<typeof createWorldVerifier>;
   models?: {
     proposeMission: (input: unknown) => Promise<MissionProposal>;
@@ -121,6 +129,8 @@ export function createApi(config: ApiConfig) {
     message: string,
   ) => c.json({ error: { code, message } }, status);
   app.onError((e, c) => {
+    if (e instanceof PermissionError)
+      return error(c, e.status, e.code, e.message);
     if (e instanceof HttpError) return error(c, e.status, e.code, e.message);
     if (e instanceof v.ValiError || e instanceof SyntaxError)
       return error(c, 400, "INVALID_REQUEST", "Invalid request data.");
@@ -201,6 +211,17 @@ export function createApi(config: ApiConfig) {
       ),
       assessment: evaluation?.assessment ?? null,
       decision: evaluation?.decision ?? null,
+      permissionReviews: (
+        await db.list<JawPermissionReview>("jaw_reviews")
+      ).filter((review) => review.missionId === m.id),
+      permissionGrants: (await db.list<JawPermissionGrant>("jaw_permissions"))
+        .filter((grant) => grant.missionId === m.id)
+        .map((grant) =>
+          ["ACTIVE", "UNVERIFIED"].includes(grant.status) &&
+          grant.end * 1000 <= Date.now()
+            ? { ...grant, status: "EXPIRED" as const }
+            : grant,
+        ),
     };
   }
   async function audit(
@@ -226,6 +247,20 @@ export function createApi(config: ApiConfig) {
     } satisfies AuditEvent);
   }
   app.get("/api/health", (c) => c.json({ status: "ok" }));
+  const permissions = createPermissionService(db, config.jawPermissionVerifier);
+  app.get("/api/jaw/permissions", async (c) =>
+    c.json({ grants: await permissions.list(await linkedSession(c)) }),
+  );
+  app.post("/api/jaw/permissions/record", async (c) => {
+    const s = await linkedSession(c);
+    return c.json({ grant: await permissions.record(s, await c.req.json()) });
+  });
+  app.post("/api/jaw/permissions/:id/revoke", async (c) => {
+    const s = await linkedSession(c);
+    return c.json({
+      grant: await permissions.revoke(s, c.req.param("id"), await c.req.json()),
+    });
+  });
   app.get("/api/ready", (c) => {
     const services = [
       ["JAW SIWE", !!config.siweVerifier],
@@ -1160,6 +1195,9 @@ export function createApi(config: ApiConfig) {
   app.post("/api/actions/:id/execute", async (c) => {
     const a = await ownedAction(c);
     const executor = createExecutor({
+      ...(config.jawPermissionVerifier
+        ? { jawPermissionVerifier: config.jawPermissionVerifier }
+        : {}),
       db,
       readAuthorization: requireService(config.ens).readAuthorization,
       evaluate: requireService(config.models).evaluate,

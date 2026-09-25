@@ -11,6 +11,8 @@ import type {
 } from "@humanos/schemas";
 import { api } from "../lib/api";
 import { useAuth } from "./auth/use-auth";
+import { getBrowserJawProvider } from "./auth/jaw";
+import { createJawPermissionClient } from "./permissions/jaw-permissions";
 import { Composer } from "./chat/composer";
 import { buildTranscript } from "./chat/mission-flow";
 import { Transcript, type TranscriptActions } from "./chat/transcript";
@@ -175,6 +177,21 @@ function App() {
       void perform(() => actionMutation(actionId, "execute", true)),
   };
   const transcript = buildTranscript(detail, ready);
+  const jawProvider = getBrowserJawProvider();
+  const permissionClient =
+    jawProvider && auth.account
+      ? createJawPermissionClient(
+          jawProvider,
+          {
+            record: (grant) => api("/jaw/permissions/record", { grant }),
+            revoke: (id) =>
+              api(`/jaw/permissions/${encodeURIComponent(id)}/revoke`, {
+                success: true,
+              }),
+          },
+          auth.account.address,
+        )
+      : undefined;
   if (auth.root)
     transcript.splice(0, 0, {
       kind: "identity",
@@ -299,6 +316,8 @@ function App() {
                 capabilities={caps}
                 setCapabilities={setCaps}
                 actions={actions}
+                permissionClient={permissionClient}
+                onPermissionRecorded={() => select(detail.mission.id)}
               />
             )}
           </>

@@ -113,14 +113,22 @@ it("rejects malformed wallet addresses and chain identifiers", () => {
 
 it("validates strict JAW permission grants", async () => {
   const grant = {
-    id: "grant-1",
+    id: `0x${"a".repeat(64)}`,
+    missionId: "mission-1",
+    reviewId: "review-1",
     accountId: account.id,
+    account: account.address,
     chainId: 11155111,
-    permissionId: "permission-1",
-    status: "ACTIVE",
-    targets: [account.address],
-    functions: ["transfer(address,uint256)"],
-    spends: [{ token: account.address, allowance: "100", period: "day" }],
+    permissionId: `0x${"a".repeat(64)}`,
+    status: "UNVERIFIED",
+    spender: anotherAccount.address,
+    calls: [{ target: account.address, selector: "0xa9059cbb" }],
+    spends: [
+      { token: account.address, allowance: "100", unit: "day", multiplier: 1 },
+    ],
+    start: Date.parse(stamp) / 1000,
+    end: Date.parse(future) / 1000,
+    salt: "0x1",
     expiresAt: future,
     createdAt: stamp,
     revokedAt: null,
@@ -131,7 +139,7 @@ it("validates strict JAW permission grants", async () => {
   expect(
     v.safeParse(JawPermissionGrantSchema, {
       ...grant,
-      targets: ["0xBAD"],
+      calls: [{ target: "0xBAD", selector: "0xa9059cbb" }],
     }).success,
   ).toBe(false);
 });

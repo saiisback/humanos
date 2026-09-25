@@ -131,6 +131,22 @@ export function buildTranscript(
     { kind: "agent", id: `intro-${mission.id}`, text: mission.title },
     { kind: "mandate", id: `mandate-${mission.id}`, mission },
   ];
+  for (const review of detail.permissionReviews ?? []) {
+    if (review.missionId !== mission.id) continue;
+    const grants = (detail.permissionGrants ?? []).filter(
+      (grant) => grant.reviewId === review.id,
+    );
+    for (const grant of grants.length ? grants : [null])
+      items.push({
+        kind: "permission",
+        id: `permission-${grant?.id ?? review.id}`,
+        review,
+        grant,
+        enabled: ["AUTHORIZED", "RUNNING", "AWAITING_APPROVAL"].includes(
+          mission.state,
+        ),
+      });
+  }
   if (mission.agentEns)
     items.push({
       kind: "ens",
