@@ -74,16 +74,16 @@ Every executable block is registered in code with a versioned definition. A bloc
 
 Initial block families:
 
-| Family | Initial block types | Notes |
-| --- | --- | --- |
-| Research | `research.web`, `extract.structured` | Read-only, sources retained in outputs. |
-| Browser | `browser.navigate`, `browser.extract`, `browser.fill`, `browser.submit` | Submit is irreversible and confirmation-gated. |
-| Connector | `connector.call` | Uses a registered adapter and typed operation. |
-| Content | `content.generate`, `content.transform` | DeepSeek only; cannot add blocks or call tools. |
-| Control | `control.wait`, `control.branch`, `control.join` | Deterministic state transitions. |
-| Human | `human.connect`, `human.confirm`, `human.input` | Explicit pause states. |
-| Schedule | `schedule.once`, `schedule.recurring` | Local scheduler in v1. |
-| Existing effects | `application.submit`, `calendar.create` | Adapt existing execution paths into blocks. |
+| Family           | Initial block types                                                     | Notes                                           |
+| ---------------- | ----------------------------------------------------------------------- | ----------------------------------------------- |
+| Research         | `research.web`, `extract.structured`                                    | Read-only, sources retained in outputs.         |
+| Browser          | `browser.navigate`, `browser.extract`, `browser.fill`, `browser.submit` | Submit is irreversible and confirmation-gated.  |
+| Connector        | `connector.call`                                                        | Uses a registered adapter and typed operation.  |
+| Content          | `content.generate`, `content.transform`                                 | DeepSeek only; cannot add blocks or call tools. |
+| Control          | `control.wait`, `control.branch`, `control.join`                        | Deterministic state transitions.                |
+| Human            | `human.connect`, `human.confirm`, `human.input`                         | Explicit pause states.                          |
+| Schedule         | `schedule.once`, `schedule.recurring`                                   | Local scheduler in v1.                          |
+| Existing effects | `application.submit`, `calendar.create`                                 | Adapt existing execution paths into blocks.     |
 
 Adding “any workflow” means expanding this audited catalog and connector registry, not executing arbitrary model-produced code. Unsupported requests remain saved but pause with a clear missing-capability state.
 
@@ -119,7 +119,7 @@ The existing Mission remains the user-facing authorization envelope. The workflo
 
 ### `workflow`
 
-- `id`, `root_id`, `mission_id`, `name`, `status`
+- `id`, `account_id`, optional `root_id`, optional `mission_id`, `name`, `status`
 - `latest_version_id`
 - `created_at`, `updated_at`, `archived_at`
 
@@ -251,7 +251,7 @@ The API remains backend-authoritative and adds versioned endpoints equivalent to
 - read run timeline, step outputs, and receipts;
 - prepare and consume a final confirmation.
 
-All mutating endpoints require the existing authenticated JAW/SIWE session, CSRF/origin protection, root-account binding, ownership checks, and request idempotency. The client cannot directly set run state, mark a step complete, or supply a successful connector/browser result.
+All mutating endpoints require the existing authenticated JAW/SIWE session, CSRF/origin protection, account ownership checks, and request idempotency. A root-account binding is additionally required only for a workflow event that explicitly uses World ID or an existing root-owned Mission. The client cannot directly set run state, mark a step complete, or supply a successful connector/browser result.
 
 ## 11. Security and Safety
 
