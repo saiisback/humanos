@@ -553,7 +553,9 @@ function App() {
                                     })
                                   }
                                 >
-                                  Verify sensitive action
+                                  {approval?.status === "PENDING"
+                                    ? "Retry verification"
+                                    : "Verify sensitive action"}
                                 </button>
                                 <button
                                   className="secondary"
@@ -613,10 +615,34 @@ function App() {
                                 <code>{receipt.id}</code>
                                 {receipt.status ===
                                   "RECONCILIATION_REQUIRED" && (
-                                  <p>
-                                    The external outcome is uncertain.
-                                    Reconciliation is required; do not resubmit.
-                                  </p>
+                                  <>
+                                    <p>
+                                      The external outcome is uncertain. Check
+                                      the existing submission to confirm its
+                                      result.
+                                    </p>
+                                    <button
+                                      className="secondary"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        void perform(async () => {
+                                          await api(
+                                            `/actions/${encodeURIComponent(a.id)}/execute`,
+                                            {},
+                                          );
+                                          await select(m.id);
+                                        })
+                                      }
+                                    >
+                                      {busy
+                                        ? "Checking submission…"
+                                        : "Check submission status"}
+                                    </button>
+                                    <p className="fine">
+                                      This checks the original operation; it
+                                      does not send a new submission.
+                                    </p>
+                                  </>
                                 )}
                               </div>
                             )}

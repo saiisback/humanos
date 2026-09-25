@@ -33,6 +33,8 @@ export async function startBackendHarness() {
   );
   await db.migrate();
   const effects = new Map<string, number>();
+  const ambiguousActions = new Set<string>();
+  const reconciliations = new Map<string, number>();
   const revoked = new Set<string>();
   const config: ApiConfig = {
     db,
@@ -131,14 +133,22 @@ export async function startBackendHarness() {
     effect: {
       async execute(a) {
         effects.set(a.id, (effects.get(a.id) ?? 0) + 1);
+        if (ambiguousActions.has(a.id))
+          throw new Error("Fixture response lost after external effect");
         return {
           externalId: "fixture-" + a.id,
           payloadHash: a.payloadHash,
           kind: a.type === "SUBMIT_APPLICATION" ? "application" : "calendar",
         };
       },
-      async reconcile() {
-        throw new Error("No ambiguous fixture effects");
+      async reconcile(a) {
+        if (!effects.has(a.id)) throw new Error("No prior external effect");
+        reconciliations.set(a.id, (reconciliations.get(a.id) ?? 0) + 1);
+        return {
+          externalId: "fixture-" + a.id,
+          payloadHash: a.payloadHash,
+          kind: a.type === "SUBMIT_APPLICATION" ? "application" : "calendar",
+        };
       },
     },
   };
@@ -202,6 +212,8 @@ export async function startBackendHarness() {
     url: config.origin,
     db,
     effects,
+    ambiguousActions,
+    reconciliations,
     async seed() {
       const rootId = randomUUID(),
         token = randomBytes(32).toString("hex");
