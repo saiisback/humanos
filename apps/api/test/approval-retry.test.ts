@@ -11,6 +11,7 @@ import {
   type WorldProofRequest,
 } from "@humanos/schemas";
 import { createApi, type ApiConfig } from "../src/app.js";
+import { approvalBinding } from "@humanos/world";
 const db = new Database(
   process.env.TEST_DATABASE_URL ??
     "postgresql://saikarthik@127.0.0.1:55432/humanos",
@@ -18,6 +19,7 @@ const db = new Database(
 );
 beforeAll(() => db.migrate());
 afterAll(() => db.close());
+const fixtureNullifiers = new Map<string, `0x${string}`>();
 // API boundary fixture. Cryptographic acceptance is covered separately by World adapter tests.
 const world: NonNullable<ApiConfig["world"]> = {
   createRequest(action, signal) {
@@ -36,13 +38,12 @@ const world: NonNullable<ApiConfig["world"]> = {
       },
     };
   },
-  async verify(expected, payload, expectedNullifier) {
-    if (
-      (payload as { nonce: string }).nonce !== expected.rpContext.nonce ||
-      expectedNullifier !== "1"
-    )
+  async verify(expected, payload) {
+    if ((payload as { nonce: string }).nonce !== expected.rpContext.nonce)
       throw new Error("invalid fixture proof");
-    return { nullifier: "1", nullifierHash: hashCanonical("fixture-human") };
+    const nullifierHash = fixtureNullifiers.get(expected.signal);
+    if (!nullifierHash) throw new Error("unknown fixture human");
+    return { nullifier: "1", nullifierHash };
   },
 };
 async function setup(
@@ -74,8 +75,14 @@ async function setup(
     accountId,
     rootId,
     expiresAt,
-    nullifier: "1",
   });
+  await db.insert("root_bindings", {
+    id: randomUUID(),
+    rootId,
+    accountId,
+    createdAt: stamp,
+  });
+  await db.insert("nullifiers", { id: hashCanonical(rootId), rootId });
   const mission: Mission = {
     id: randomUUID(),
     rootId,
@@ -107,10 +114,23 @@ async function setup(
     expiresAt,
   };
   await db.insert("actions", action);
+  fixtureNullifiers.set(
+    hashCanonical(approvalBinding(action)),
+    hashCanonical(rootId),
+  );
   const app = createApi({
     db,
     origin: "http://localhost:5173",
     world,
+    siweVerifier: {
+      async verify({ message }) {
+        const address = message.match(
+          /wants you to sign in with your Ethereum account:\n(0x[0-9a-fA-F]{40})/,
+        )?.[1];
+        if (!address) throw new Error("invalid message");
+        return { address: address as `0x${string}`, chainId: 11155111 };
+      },
+    },
     ...(ens ? { ens } : {}),
   });
   const headers = {
@@ -119,6 +139,71 @@ async function setup(
   };
   return { app, mission, action, headers, rootId, accountId, expiresAt };
 }
+it("approves against durable nullifier after logout and SIWE root restoration", async () => {
+  const s = await setup();
+  await s.app.request("/api/auth/logout", {
+    method: "POST",
+    headers: { ...s.headers, origin: "http://localhost:5173" },
+  });
+  const nonceResponse = await s.app.request("/api/auth/siwe/nonce", {
+    method: "POST",
+    headers: { origin: "http://localhost:5173" },
+  });
+  const nonce = await nonceResponse.json();
+  const cookie = nonceResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+  const message = `localhost:5173 wants you to sign in with your Ethereum account:\n${s.accountId.split(":")[1]}\n\nURI: http://localhost:5173\nVersion: 1\nChain ID: 11155111\nNonce: ${nonce.nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(Date.now() + 240000).toISOString()}`;
+  const login = await s.app.request("/api/auth/siwe/verify", {
+    method: "POST",
+    headers: {
+      origin: "http://localhost:5173",
+      cookie,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      challengeId: nonce.challengeId,
+      message,
+      signature: "fixture",
+    }),
+  });
+  expect(login.status).toBe(200);
+  expect(await login.json()).toMatchObject({ root: { id: s.rootId } });
+  const newCookie = login.headers.get("set-cookie")?.split(";")[0] ?? "";
+  const route = `/api/actions/${s.action.id}/approval`;
+  const requested = await s.app.request(`${route}/request`, {
+    method: "POST",
+    headers: { ...s.headers, cookie: newCookie },
+  });
+  expect(requested.status).toBe(200);
+  const { request } = await requested.json();
+  const approved = await s.app.request(`${route}/verify`, {
+    method: "POST",
+    headers: { ...s.headers, cookie: newCookie },
+    body: JSON.stringify({
+      requestId: request.requestId,
+      proof: {
+        nonce: request.rpContext.nonce,
+        proof: "PRIVATE_PROOF_DO_NOT_LOG",
+      },
+    }),
+  });
+  expect(approved.status).toBe(200);
+  expect(
+    (
+      await db.get<Approval>(
+        "approvals",
+        (await db.list<Approval>("approvals")).find(
+          (p) => p.actionId === s.action.id,
+        )!.id,
+      )
+    )?.status,
+  ).toBe("VERIFIED");
+  expect(JSON.stringify(await db.list("sessions"))).not.toContain(
+    '"nullifier"',
+  );
+  expect(JSON.stringify(await db.list("audit"))).not.toContain(
+    "PRIVATE_PROOF_DO_NOT_LOG",
+  );
+});
 it("refreshes expired challenge without replacing approval; old request cannot verify", async () => {
   const s = await setup();
   const route = `/api/actions/${s.action.id}/approval`;
@@ -177,7 +262,6 @@ it("refuses cancelled approval refresh and another session takeover", async () =
     accountId: s.accountId,
     rootId: s.rootId,
     expiresAt: s.expiresAt,
-    nullifier: "1",
   });
   expect(
     (

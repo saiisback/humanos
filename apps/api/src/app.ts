@@ -33,7 +33,11 @@ import {
   classifyStatic,
 } from "@humanos/policy";
 import { JEV_MODEL, JEV_QUESTION_VERSION } from "@humanos/models";
-import { approvalBinding, type createWorldVerifier } from "@humanos/world";
+import {
+  approvalBinding,
+  WorldVerificationError,
+  type createWorldVerifier,
+} from "@humanos/world";
 import {
   createExecutor,
   type ExecutionDependencies,
@@ -133,6 +137,28 @@ export function createApi(config: ApiConfig) {
     const s = await db.get<SessionRecord>("sessions", hashCanonical(token));
     return s && Date.parse(s.expiresAt) > Date.now() ? s : null;
   }
+  async function linkedSession(
+    c: Context,
+  ): Promise<SessionRecord & { rootId: string }> {
+    const s = await session(c);
+    if (
+      !s ||
+      !s.accountId ||
+      !(await db.get<WalletAccount>("accounts", s.accountId))
+    )
+      throw new HttpError(401, "UNAUTHENTICATED");
+    if (!s.rootId) throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+    const binding = await db.query<{ data: { rootId: string } }>(
+      "SELECT data FROM root_bindings WHERE account_id=$1",
+      [s.accountId],
+    );
+    if (
+      binding.rows[0]?.data.rootId !== s.rootId ||
+      !(await db.get<RootIdentity>("roots", s.rootId))
+    )
+      throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+    return s as SessionRecord & { rootId: string };
+  }
   const cookieOpts = {
     httpOnly: true,
     sameSite: "Strict" as const,
@@ -141,8 +167,7 @@ export function createApi(config: ApiConfig) {
   };
   async function owner(c: Context, id: string): Promise<Mission> {
     const m = await db.get<Mission>("missions", id);
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     if (!m || m.rootId !== s.rootId) throw new HttpError(404, "NOT_FOUND");
     return m;
   }
@@ -433,6 +458,13 @@ export function createApi(config: ApiConfig) {
     return c.json({ root: null });
   });
   app.post("/api/world/root/request", async (c) => {
+    const s = await session(c);
+    if (
+      !s ||
+      !s.accountId ||
+      !(await db.get<WalletAccount>("accounts", s.accountId))
+    )
+      throw new HttpError(401, "UNAUTHENTICATED");
     const world = requireService(config.world);
     const token = randomBytes(32).toString("hex");
     const request = world.createRequest("humanos-root", hashCanonical(token));
@@ -440,6 +472,8 @@ export function createApi(config: ApiConfig) {
       id: request.requestId,
       request,
       ownerHash: hashCanonical(token),
+      sessionId: s.id,
+      accountId: s.accountId,
       kind: "root",
       expiresAt: new Date(
         Number(request.rpContext.expires_at) * 1000,
@@ -450,75 +484,154 @@ export function createApi(config: ApiConfig) {
     return c.json(request);
   });
   app.post("/api/world/root/verify", async (c) => {
+    const s = await session(c);
+    if (
+      !s ||
+      !s.accountId ||
+      !(await db.get<WalletAccount>("accounts", s.accountId))
+    )
+      throw new HttpError(401, "UNAUTHENTICATED");
     const input = v.parse(VerifyWorldRequestSchema, await c.req.json());
     const challenge = await db.get<{
       id: string;
       request: WorldProofRequest;
       ownerHash: string;
       kind: string;
+      sessionId: string;
+      accountId: string;
+      expiresAt: string;
+      consumedAt: string | null;
     }>("challenges", input.requestId);
     const token = getCookie(c, "humanos_challenge");
     if (
       !token ||
       !challenge ||
       challenge.kind !== "root" ||
-      challenge.ownerHash !== hashCanonical(token)
+      challenge.ownerHash !== hashCanonical(token) ||
+      challenge.sessionId !== s.id ||
+      challenge.accountId !== s.accountId
     )
       throw new HttpError(403, "FORBIDDEN");
-    const verified = await requireService(config.world).verify(
-      challenge.request,
-      input.proof,
-    );
-    let root: RootIdentity = {
+    if (challenge.consumedAt || Date.parse(challenge.expiresAt) <= Date.now())
+      throw new HttpError(403, "INVALID_CHALLENGE");
+    let verified: Awaited<
+      ReturnType<NonNullable<ApiConfig["world"]>["verify"]>
+    >;
+    try {
+      verified = await requireService(config.world).verify(
+        challenge.request,
+        input.proof,
+      );
+    } catch (error) {
+      if (
+        error instanceof WorldVerificationError &&
+        error.reason === "invalid_proof"
+      )
+        throw new HttpError(403, "INVALID_PROOF");
+      throw error;
+    }
+    const nullifierHash = verified.nullifierHash.toLowerCase();
+    const freshRoot: RootIdentity = {
       id: randomUUID(),
       ensName: null,
       createdAt: new Date().toISOString(),
       verificationEnvironment: challenge.request.environment,
     };
-    const sessionToken = randomBytes(32).toString("hex");
-    await db.transaction(async (tx) => {
-      await tx.consumeChallenge(challenge.id, new Date());
-      const existing = await tx.get<{ id: string; rootId: string }>(
-        "nullifiers",
-        verified.nullifierHash,
-      );
-      if (existing) {
-        const known = await tx.get<RootIdentity>("roots", existing.rootId);
-        if (!known) throw new HttpError(409, "CONFLICT");
-        root = known;
-      } else {
-        await tx.insert("roots", root);
-        await tx.claimNullifier(verified.nullifierHash, root.id);
-      }
-      await tx.insert("sessions", {
-        id: hashCanonical(sessionToken),
-        rootId: root.id,
-        expiresAt: new Date(Date.now() + 8 * 3600000).toISOString(),
-        nullifier: verified.nullifier,
-      });
-    });
-    setCookie(c, "humanos_session", sessionToken, {
-      ...cookieOpts,
-      maxAge: 8 * 3600,
-    });
+    let root: RootIdentity;
+    let account: WalletAccount;
+    try {
+      ({ root, account } = await db.transaction(async (tx) => {
+        const lockedSession = await tx.query<{ data: SessionRecord }>(
+          "SELECT data FROM sessions WHERE id=$1 FOR UPDATE",
+          [s.id],
+        );
+        const currentSession = lockedSession.rows[0]?.data;
+        if (
+          !currentSession ||
+          currentSession.accountId !== s.accountId ||
+          Date.parse(currentSession.expiresAt) <= Date.now()
+        )
+          throw new HttpError(401, "UNAUTHENTICATED");
+        const lockedAccount = await tx.query<{ data: WalletAccount }>(
+          "SELECT data FROM accounts WHERE id=$1 FOR UPDATE",
+          [s.accountId],
+        );
+        const account = lockedAccount.rows[0]?.data;
+        if (!account) throw new HttpError(401, "UNAUTHENTICATED");
+        const lockedChallenge = await tx.query<{ data: typeof challenge }>(
+          "SELECT data FROM challenges WHERE id=$1 FOR UPDATE",
+          [challenge.id],
+        );
+        const currentChallenge = lockedChallenge.rows[0]?.data;
+        if (
+          !currentChallenge ||
+          currentChallenge.kind !== "root" ||
+          currentChallenge.sessionId !== s.id ||
+          currentChallenge.accountId !== s.accountId ||
+          currentChallenge.ownerHash !== hashCanonical(token) ||
+          currentChallenge.consumedAt ||
+          Date.parse(currentChallenge.expiresAt) <= Date.now() ||
+          hashCanonical(currentChallenge.request) !==
+            hashCanonical(challenge.request)
+        )
+          throw new HttpError(403, "INVALID_CHALLENGE");
+        await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+          `humanos:world:nullifier:${nullifierHash}`,
+        ]);
+        if (Date.parse(currentSession.expiresAt) <= Date.now())
+          throw new HttpError(401, "UNAUTHENTICATED");
+        if (Date.parse(currentChallenge.expiresAt) <= Date.now())
+          throw new HttpError(403, "INVALID_CHALLENGE");
+        const existing = await tx.get<{ id: string; rootId: string }>(
+          "nullifiers",
+          nullifierHash,
+        );
+        let root: RootIdentity;
+        if (existing) {
+          const known = await tx.get<RootIdentity>("roots", existing.rootId);
+          if (!known) throw new HttpError(409, "ROOT_ACCOUNT_CONFLICT");
+          root = known;
+        } else {
+          root = freshRoot;
+          await tx.insert("roots", root);
+          await tx.claimNullifier(nullifierHash, root.id);
+        }
+        if (currentSession.rootId && currentSession.rootId !== root.id)
+          throw new HttpError(409, "ROOT_ACCOUNT_CONFLICT");
+        await tx.bindRootAccount(root.id, s.accountId, new Date());
+        await tx.consumeChallenge(challenge.id, new Date());
+        await tx.put("sessions", { ...currentSession, rootId: root.id });
+        return { root, account };
+      }));
+    } catch (error) {
+      if (error instanceof Error && error.message === "ROOT_ACCOUNT_CONFLICT")
+        throw new HttpError(409, "ROOT_ACCOUNT_CONFLICT");
+      if (
+        error instanceof Error &&
+        error.message === "CHALLENGE_NOT_CONSUMABLE"
+      )
+        throw new HttpError(403, "INVALID_CHALLENGE");
+      throw error;
+    }
     deleteCookie(c, "humanos_challenge", { path: "/" });
-    return c.json({ root });
+    return c.json({
+      account: account!,
+      root: root!,
+      jawConfigured: !!config.siweVerifier,
+    });
   });
   app.use("/api/missions/*", async (c, next) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     c.set("session", s);
     await next();
   });
   app.use("/api/actions/*", async (c, next) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     c.set("session", s);
     await next();
   });
   app.get("/api/missions", async (c) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     return c.json({
       missions: (await db.list<Mission>("missions")).filter(
         (m) => m.rootId === s.rootId,
@@ -526,9 +639,7 @@ export function createApi(config: ApiConfig) {
     });
   });
   app.post("/api/missions", async (c) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
-    if (!s.rootId) throw new HttpError(403, "ROOT_REQUIRED");
+    const s = await linkedSession(c);
     const input = v.parse(CreateMissionRequestSchema, await c.req.json());
     const proposed = await requireService(config.models).proposeMission(input);
     const expiresAt = input.expiresAt ?? proposed.expiresAt;
@@ -844,7 +955,6 @@ export function createApi(config: ApiConfig) {
       verified = await requireService(config.world).verify(
         challenge.request,
         input.proof,
-        String(s.nullifier),
       );
     } catch (error) {
       // A denied attempt is not a terminal human cancellation. Never store proof bytes or provider errors.
@@ -866,13 +976,53 @@ export function createApi(config: ApiConfig) {
       throw error;
     }
     const next = await db.withLockedAction(a.id, async (tx) => {
+      const live = await tx.query<{ data: SessionRecord }>(
+        "SELECT data FROM sessions WHERE id=$1 FOR UPDATE",
+        [s.id],
+      );
+      const currentSession = live.rows[0]?.data;
+      if (
+        !currentSession ||
+        currentSession.accountId !== s.accountId ||
+        currentSession.rootId !== s.rootId ||
+        Date.parse(currentSession.expiresAt) <= Date.now()
+      )
+        throw new HttpError(401, "UNAUTHENTICATED");
+      const binding = await tx.query<{ data: { rootId: string } }>(
+        "SELECT data FROM root_bindings WHERE account_id=$1",
+        [s.accountId],
+      );
+      if (binding.rows[0]?.data.rootId !== s.rootId)
+        throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+      const m = await tx.get<Mission>("missions", a.missionId);
+      const currentChallenge = await tx.get<typeof challenge>(
+        "challenges",
+        challenge.id,
+      );
+      if (
+        !m ||
+        !currentChallenge ||
+        currentChallenge.kind !== "approval" ||
+        currentChallenge.sessionId !== s.id ||
+        currentChallenge.actionId !== a.id ||
+        currentChallenge.rootId !== s.rootId ||
+        hashCanonical(currentChallenge.request) !==
+          hashCanonical(challenge.request) ||
+        m.rootId !== s.rootId ||
+        a.rootId !== s.rootId
+      )
+        throw new HttpError(403, "FORBIDDEN");
+      const nullifier = await tx.get<{ rootId: string }>(
+        "nullifiers",
+        verified.nullifierHash.toLowerCase(),
+      );
+      if (!nullifier || nullifier.rootId !== s.rootId)
+        throw new HttpError(403, "FORBIDDEN");
       await tx.consumeChallenge(challenge.id, new Date());
       await tx.updateApprovalStatus(challenge.approvalId, "VERIFIED", {
         verifiedAt: new Date().toISOString(),
         nullifierHash: verified.nullifierHash,
       });
-      const m = await tx.get<Mission>("missions", a.missionId);
-      if (!m) throw new HttpError(404, "NOT_FOUND");
       const next = {
         ...m,
         state: transition(m.state, "APPROVE"),

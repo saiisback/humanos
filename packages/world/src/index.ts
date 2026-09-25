@@ -8,7 +8,10 @@ import {
   type WorldProofRequest,
 } from "@humanos/schemas";
 export class WorldVerificationError extends Error {
-  constructor(message = "World proof verification failed") {
+  constructor(
+    message = "World proof verification failed",
+    public readonly reason: "invalid_proof" | "unavailable" = "invalid_proof",
+  ) {
     super(message);
     this.name = "WorldVerificationError";
   }
@@ -135,9 +138,9 @@ export function createWorldVerifier(config: WorldConfig) {
       const nullifier = normalizeNullifier(item.nullifier);
       if (expectedNullifier !== undefined && nullifier !== expectedNullifier)
         throw new WorldVerificationError("Proof belongs to another human");
-      let result: Record<string, unknown>;
+      let response: Response;
       try {
-        const response = await transport(
+        response = await transport(
           `https://developer.world.org/api/v4/verify/${encodeURIComponent(config.rpId)}`,
           {
             method: "POST",
@@ -147,10 +150,25 @@ export function createWorldVerifier(config: WorldConfig) {
             redirect: "error",
           },
         );
-        if (!response.ok) throw new WorldVerificationError();
+      } catch {
+        throw new WorldVerificationError(
+          "World verification unavailable",
+          "unavailable",
+        );
+      }
+      if (!response.ok)
+        throw new WorldVerificationError(
+          "World verification failed",
+          response.status >= 500 ? "unavailable" : "invalid_proof",
+        );
+      let result: Record<string, unknown>;
+      try {
         result = object(await response.json());
       } catch {
-        throw new WorldVerificationError();
+        throw new WorldVerificationError(
+          "World verification unavailable",
+          "unavailable",
+        );
       }
       if (
         result.success !== true ||

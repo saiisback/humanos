@@ -23,7 +23,7 @@ describe("actual API authentication and honest unavailable state", () => {
           headers: { origin: "http://localhost:5173" },
         })
       ).status,
-    ).toBe(503);
+    ).toBe(401);
   });
   it("protects all mission/action/internal access and CSRF", async () => {
     for (const path of [
@@ -82,6 +82,12 @@ describe("actual API authentication and honest unavailable state", () => {
       rootId,
       expiresAt: new Date(Date.now() + 60000).toISOString(),
     });
+    await db.insert("root_bindings", {
+      id: randomUUID(),
+      rootId,
+      accountId,
+      createdAt: stamp,
+    });
     const mission: Mission = {
       id: randomUUID(),
       rootId: other,
@@ -118,5 +124,68 @@ describe("actual API authentication and honest unavailable state", () => {
         })
       ).status,
     ).toBe(401);
+  });
+  it("distinguishes an unlinked account from an unauthenticated request", async () => {
+    const accountId = "11155111:0x2222222222222222222222222222222222222222";
+    const token = randomUUID();
+    await db.insert("accounts", {
+      id: accountId,
+      address: accountId.split(":")[1],
+      chainId: 11155111,
+      createdAt: new Date().toISOString(),
+    });
+    await db.insert("sessions", {
+      id: hashCanonical(token),
+      accountId,
+      rootId: null,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+    });
+    for (const path of [
+      "/api/missions",
+      "/api/missions/unknown",
+      "/api/actions/unknown/execute",
+      "/api/internal/conversations/unknown",
+    ]) {
+      const response = await app.request(path, {
+        headers: { cookie: `humanos_session=${token}` },
+      });
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe(
+        "HUMAN_VERIFICATION_REQUIRED",
+      );
+      expect((await app.request(path)).status).toBe(401);
+    }
+  });
+  it("refuses a session root without the matching durable account binding", async () => {
+    const stamp = new Date().toISOString();
+    const rootId = randomUUID();
+    const token = randomUUID();
+    const address = "0x3333333333333333333333333333333333333333";
+    const accountId = `11155111:${address}`;
+    await db.insert("roots", {
+      id: rootId,
+      ensName: null,
+      createdAt: stamp,
+      verificationEnvironment: "staging",
+    });
+    await db.insert("accounts", {
+      id: accountId,
+      address,
+      chainId: 11155111,
+      createdAt: stamp,
+    });
+    await db.insert("sessions", {
+      id: hashCanonical(token),
+      accountId,
+      rootId,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+    });
+    const response = await app.request("/api/missions", {
+      headers: { cookie: `humanos_session=${token}` },
+    });
+    expect(response.status).toBe(403);
+    expect((await response.json()).error.code).toBe(
+      "HUMAN_VERIFICATION_REQUIRED",
+    );
   });
 });
