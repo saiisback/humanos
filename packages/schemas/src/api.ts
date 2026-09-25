@@ -57,7 +57,7 @@ export const VerifySiweRequestSchema = v.strictObject({
 });
 export type VerifySiweRequest = v.InferOutput<typeof VerifySiweRequestSchema>;
 export const AuthSessionResponseSchema = v.strictObject({
-  account: WalletAccountSchema,
+  account: v.nullable(WalletAccountSchema),
   root: v.nullable(RootIdentitySchema),
   jawConfigured: v.boolean(),
 });

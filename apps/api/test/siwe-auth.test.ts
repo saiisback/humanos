@@ -2,6 +2,8 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Database } from "@humanos/database";
 import { hashCanonical } from "@humanos/schemas";
+import { AuthSessionResponseSchema } from "@humanos/schemas";
+import * as v from "valibot";
 import { createApi, type ApiConfig } from "../src/app.js";
 
 const origin = "http://localhost:5173";
@@ -14,7 +16,9 @@ const db = new Database(
 const verifier: NonNullable<ApiConfig["siweVerifier"]> = {
   async verify({ message, signature }) {
     if (signature !== hashCanonical(message))
-      throw new Error("INVALID_SIGNATURE");
+      throw Object.assign(new Error("INVALID_SIGNATURE"), {
+        reason: "invalid_signature",
+      });
     const match = message.match(
       /wants you to sign in with your Ethereum account:\n(0x[0-9a-fA-F]{40})/,
     );
@@ -29,8 +33,8 @@ const app = createApi({ db, origin, siweVerifier: verifier });
 beforeAll(() => db.migrate());
 afterAll(() => db.close());
 
-async function challenge() {
-  const response = await app.request("/api/auth/siwe/nonce", {
+async function challenge(api: ReturnType<typeof createApi> = app) {
+  const response = await api.request("/api/auth/siwe/nonce", {
     method: "POST",
     headers: { origin },
   });
@@ -67,8 +71,9 @@ async function verify(
   c: Awaited<ReturnType<typeof challenge>>,
   signedMessage: string,
   signature = hashCanonical(signedMessage),
+  api: ReturnType<typeof createApi> = app,
 ) {
-  return app.request("/api/auth/siwe/verify", {
+  return api.request("/api/auth/siwe/verify", {
     method: "POST",
     headers: { origin, cookie: c.cookie, "content-type": "application/json" },
     body: JSON.stringify({
@@ -92,11 +97,14 @@ it("issues an account session once and rejects replay", async () => {
   expect((await verify(c, message(c.body))).status).toBe(403);
   const sessionCookie = first.headers.get("set-cookie")?.split(";")[0] ?? "";
   expect(
-    await (
-      await app.request("/api/auth/session", {
-        headers: { cookie: sessionCookie },
-      })
-    ).json(),
+    v.parse(
+      AuthSessionResponseSchema,
+      await (
+        await app.request("/api/auth/session", {
+          headers: { cookie: sessionCookie },
+        })
+      ).json(),
+    ),
   ).toMatchObject({ account: { address }, root: null });
   expect(
     (
@@ -107,12 +115,29 @@ it("issues an account session once and rejects replay", async () => {
     ).status,
   ).toBe(200);
   expect(
-    await (
-      await app.request("/api/auth/session", {
-        headers: { cookie: sessionCookie },
-      })
-    ).json(),
+    v.parse(
+      AuthSessionResponseSchema,
+      await (
+        await app.request("/api/auth/session", {
+          headers: { cookie: sessionCookie },
+        })
+      ).json(),
+    ),
   ).toMatchObject({ account: null, root: null });
+});
+
+it("returns schema-valid anonymous and logout responses", async () => {
+  const anonymous = await app.request("/api/auth/session");
+  expect(
+    v.parse(AuthSessionResponseSchema, await anonymous.json()),
+  ).toMatchObject({ account: null, root: null });
+  const logout = await app.request("/api/auth/logout", {
+    method: "POST",
+    headers: { origin },
+  });
+  expect(v.parse(AuthSessionResponseSchema, await logout.json())).toMatchObject(
+    { account: null, root: null },
+  );
 });
 
 it.each([
@@ -147,6 +172,70 @@ it("preserves a challenge after an invalid signature or expired message", async 
     ).status,
   ).toBe(403);
   expect((await verify(c, message(c.body))).status).toBe(200);
+});
+
+it("does not issue a session if the signed message expires while verification is pending", async () => {
+  const delayed = createApi({
+    db,
+    origin,
+    siweVerifier: {
+      async verify(input) {
+        await new Promise((resolve) => setTimeout(resolve, 1250));
+        return verifier.verify(input);
+      },
+    },
+  });
+  const c = await challenge(delayed);
+  const expiring = message(c.body, {
+    expiration: new Date(Date.now() + 1000).toISOString(),
+  });
+  const response = await verify(c, expiring, hashCanonical(expiring), delayed);
+  expect(response.status).toBe(403);
+  expect(response.headers.get("set-cookie") ?? "").not.toContain(
+    "humanos_session=",
+  );
+  const fresh = message(c.body);
+  expect((await verify(c, fresh, hashCanonical(fresh), delayed)).status).toBe(
+    200,
+  );
+});
+
+it("returns unavailable for RPC failure without consuming the challenge or exposing details", async () => {
+  let first = true;
+  const unstable = createApi({
+    db,
+    origin,
+    siweVerifier: {
+      async verify(input) {
+        if (first) {
+          first = false;
+          throw Object.assign(new Error("private RPC credentials"), {
+            reason: "unavailable",
+          });
+        }
+        return verifier.verify(input);
+      },
+    },
+  });
+  const c = await challenge(unstable);
+  const signedMessage = message(c.body);
+  const unavailable = await verify(
+    c,
+    signedMessage,
+    hashCanonical(signedMessage),
+    unstable,
+  );
+  expect(unavailable.status).toBe(503);
+  const body = await unavailable.json();
+  expect(body.error.code).toBe("INTEGRATION_UNAVAILABLE");
+  expect(JSON.stringify(body)).not.toContain("private RPC credentials");
+  expect(unavailable.headers.get("set-cookie") ?? "").not.toContain(
+    "humanos_session=",
+  );
+  expect(
+    (await verify(c, signedMessage, hashCanonical(signedMessage), unstable))
+      .status,
+  ).toBe(200);
 });
 
 it("rejects an expired challenge and issues no session", async () => {

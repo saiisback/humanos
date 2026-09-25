@@ -38,7 +38,7 @@ import {
   createExecutor,
   type ExecutionDependencies,
 } from "./services/execute-sensitive-action.js";
-import type { SiweVerifier } from "./services/siwe.js";
+import { isSiweVerificationError, type SiweVerifier } from "./services/siwe.js";
 export interface EnsAdapter {
   register: (mission: Mission) => Promise<string>;
   revoke: (mission: Mission) => Promise<void>;
@@ -302,8 +302,17 @@ export function createApi(config: ApiConfig) {
         message: input.message,
         signature: input.signature,
       });
-    } catch {
-      throw new HttpError(403, "INVALID_SIGNATURE");
+    } catch (error) {
+      if (
+        isSiweVerificationError(error) &&
+        error.reason === "invalid_signature"
+      )
+        throw new HttpError(403, "INVALID_SIGNATURE");
+      throw new HttpError(
+        503,
+        "INTEGRATION_UNAVAILABLE",
+        "Account verification is temporarily unavailable.",
+      );
     }
     let address: string;
     try {
@@ -322,6 +331,11 @@ export function createApi(config: ApiConfig) {
       parsed.chainId === 11155111 &&
       parsed.nonce === challenge.nonce &&
       (!parsed.scheme || parsed.scheme === webOrigin.protocol.slice(0, -1));
+    const stillValid = (at: Date) =>
+      expiration > at.getTime() &&
+      (!parsed.notBefore || parsed.notBefore.getTime() <= at.getTime());
+    if (!stillValid(new Date()))
+      throw new HttpError(403, "INVALID_SIWE_MESSAGE");
     if (!validContext) {
       try {
         await db.transaction((tx) =>
@@ -338,12 +352,15 @@ export function createApi(config: ApiConfig) {
     let root: RootIdentity | null = null;
     try {
       await db.transaction(async (tx) => {
-        await tx.consumeChallenge(challenge.id, new Date());
+        const issuedAt = new Date();
+        if (!stillValid(issuedAt))
+          throw new HttpError(403, "INVALID_SIWE_MESSAGE");
+        await tx.consumeChallenge(challenge.id, issuedAt);
         const freshAccount: WalletAccount = {
           id: accountId,
           address,
           chainId: 11155111,
-          createdAt: now.toISOString(),
+          createdAt: issuedAt.toISOString(),
         };
         await tx.query(
           "INSERT INTO accounts (id,data) VALUES ($1,$2::jsonb) ON CONFLICT(id) DO NOTHING",
@@ -361,11 +378,19 @@ export function createApi(config: ApiConfig) {
         const rootId = binding.rows[0]?.data.rootId ?? null;
         root = rootId ? await tx.get<RootIdentity>("roots", rootId) : null;
         if (rootId && !root) throw new Error("ROOT_NOT_FOUND");
+        const sessionIssuedAt = new Date();
+        if (
+          !stillValid(sessionIssuedAt) ||
+          Date.parse(challenge.expiresAt) <= sessionIssuedAt.getTime()
+        )
+          throw new HttpError(403, "INVALID_SIWE_MESSAGE");
         await tx.insert("sessions", {
           id: hashCanonical(sessionToken),
           accountId,
           rootId,
-          expiresAt: new Date(now.getTime() + 8 * 3600000).toISOString(),
+          expiresAt: new Date(
+            sessionIssuedAt.getTime() + 8 * 3600000,
+          ).toISOString(),
         });
       });
     } catch (error) {

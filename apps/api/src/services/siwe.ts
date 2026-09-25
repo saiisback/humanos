@@ -9,6 +9,22 @@ export interface SiweVerifier {
   }): Promise<{ address: Address; chainId: number }>;
 }
 
+export class SiweVerificationError extends Error {
+  constructor(public readonly reason: "invalid_signature" | "unavailable") {
+    super(reason);
+  }
+}
+
+export function isSiweVerificationError(
+  error: unknown,
+): error is SiweVerificationError {
+  return (
+    error instanceof Error &&
+    "reason" in error &&
+    (error.reason === "invalid_signature" || error.reason === "unavailable")
+  );
+}
+
 export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
   if (!rpcUrl) throw new Error("SEPOLIA_RPC_URL required");
   const client = createPublicClient({
@@ -23,15 +39,18 @@ export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
         !parsed.chainId ||
         !/^0x[0-9a-fA-F]+$/.test(signature)
       )
-        throw new Error("INVALID_SIWE_MESSAGE");
+        throw new SiweVerificationError("invalid_signature");
       // viem verifies EOAs, ERC-1271 contracts and undeployed ERC-6492 accounts.
-      if (
-        !(await client.verifySiweMessage({
+      let valid: boolean;
+      try {
+        valid = await client.verifySiweMessage({
           message,
           signature: signature as Hex,
-        }))
-      )
-        throw new Error("INVALID_SIGNATURE");
+        });
+      } catch {
+        throw new SiweVerificationError("unavailable");
+      }
+      if (!valid) throw new SiweVerificationError("invalid_signature");
       return { address: parsed.address, chainId: parsed.chainId };
     },
   };
