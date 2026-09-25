@@ -12,7 +12,7 @@
     "dev": "node scripts/dev.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "node scripts/test.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "pnpm --filter @humanos/web build && playwright test",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

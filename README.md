@@ -30,15 +30,15 @@ pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm test:e2e
 pnpm build
+TEST_DATABASE_URL=postgresql://humanos:humanos@127.0.0.1:5432/humanos pnpm test:e2e --workers=1
 pnpm test:contracts
 pnpm calibrate
 pnpm scan
 pnpm audit
 ```
 
-Tests use real local PostgreSQL, the ENSv2 contracts on Anvil, and clearly labelled synthetic provider transports. Foundry/Anvil must be installed; the contract script also discovers ~/.foundry/bin. The prepared local database is on port 55432. Set `TEST_DATABASE_URL` explicitly for Playwright; unlike the root unit-test script, Playwright does not load `.env`. The browser suite distinguishes intercepted UI journeys from backend-connected journeys and live readiness. Read [verification evidence](docs/verification.md) for actual command results and limitations.
+Tests use real local PostgreSQL, the ENSv2 contracts on Anvil, and clearly labelled synthetic provider transports. Foundry/Anvil must be installed; the contract script also discovers ~/.foundry/bin. The prepared local database is on port 55432. Set `TEST_DATABASE_URL` explicitly for Playwright; unlike the root unit-test script, Playwright does not load `.env`. `pnpm test:e2e` builds the current production web UI once before starting Playwright, so backend-connected browser tests never consume a missing or stale `apps/web/dist`. The separate `pnpm build` gate checks the entire workspace. The browser suite distinguishes intercepted UI journeys from backend-connected journeys and live readiness. Read [verification evidence](docs/verification.md) for actual command results and limitations.
 
 ## Architecture
 
