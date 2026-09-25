@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 test("LIVE LOCAL API: readiness and unauthenticated onboarding", async ({
   page,
   request,
-}) => {
+}, testInfo) => {
   test.skip(
     process.env.HUMANOS_LIVE_API !== "1",
     "Requires actual local backend on port 3001. No interception.",
@@ -18,4 +18,8 @@ test("LIVE LOCAL API: readiness and unauthenticated onboarding", async ({
   await expect(
     page.getByRole("heading", { name: "Connection status" }),
   ).toBeVisible();
+  await page.screenshot({
+    path: `test-results/live-onboarding-${testInfo.project.name}.png`,
+    fullPage: true,
+  });
 });
