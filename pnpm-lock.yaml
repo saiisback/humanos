@@ -271,6 +271,15 @@ importers:
         specifier: 4.20.3
         version: 4.20.3
 
+  packages/workflows:
+    dependencies:
+      '@humanos/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      valibot:
+        specifier: 1.5.0
+        version: 1.5.0(typescript@5.8.3)
+
   packages/world:
     dependencies:
       '@humanos/schemas':
