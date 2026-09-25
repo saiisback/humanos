@@ -12,10 +12,10 @@ import type {
   MissionDetailResponse,
   MissionListResponse,
   Readiness,
-  SessionResponse,
   WorldProofRequest,
 } from "@humanos/schemas";
 import { api } from "../lib/api";
+import { useAuth } from "./auth/use-auth";
 import "@fontsource/dm-sans/400.css";
 import "@fontsource/dm-sans/500.css";
 import "@fontsource/dm-sans/600.css";
@@ -51,24 +51,12 @@ function Mark() {
 }
 function App() {
   const verifiedRequest = useRef<string | null>(null);
-  const [wallet, setWallet] = useState<string | null>(null);
-  async function connectWallet() {
-    const ethereum = (
-      window as unknown as {
-        ethereum?: { request: (args: { method: string }) => Promise<unknown> };
-      }
-    ).ethereum;
-    if (!ethereum)
-      throw new Error(
-        "No wallet provider detected. Open this app with an Ethereum wallet extension.",
-      );
-    const accounts = await ethereum.request({ method: "eth_requestAccounts" });
-    if (!Array.isArray(accounts) || typeof accounts[0] !== "string")
-      throw new Error("Wallet did not provide an account.");
-    setWallet(accounts[0]);
-  }
-  const [session, setSession] = useState<SessionResponse | null>(null),
-    [ready, setReady] = useState<Readiness | null>(null),
+  const auth = useAuth();
+  const session = auth;
+  const activeRoot = useRef<string | null>(null);
+  activeRoot.current =
+    auth.status === "signing-out" ? null : (auth.root?.id ?? null);
+  const [ready, setReady] = useState<Readiness | null>(null),
     [missions, setMissions] = useState<Mission[]>([]),
     [detail, setDetail] = useState<MissionDetailResponse | null>(null);
   const [goal, setGoal] = useState(""),
@@ -81,23 +69,23 @@ function App() {
       actionId?: string;
     } | null>(null);
   async function refresh() {
-    const [s, r] = await Promise.all([
-      api<SessionResponse>("/session"),
-      api<Readiness>("/ready"),
-    ]);
-    setSession(s);
-    setReady(r);
-    if (s.root) {
+    setReady(await api<Readiness>("/ready"));
+    if (auth.root) {
+      const rootId = auth.root.id;
       const list = await api<MissionListResponse>("/missions");
+      if (activeRoot.current !== rootId) return;
       setMissions(list.missions);
       const id = new URLSearchParams(location.search).get("mission");
       if (id) await select(id);
     }
   }
   async function select(id: string) {
+    const rootId = activeRoot.current;
+    if (!rootId) return;
     const d = await api<MissionDetailResponse>(
       `/missions/${encodeURIComponent(id)}`,
     );
+    if (activeRoot.current !== rootId) return;
     setDetail(d);
     setCaps(
       d.mission.approvedCapabilities.length
@@ -124,6 +112,16 @@ function App() {
   useEffect(() => {
     void perform(refresh).finally(() => setLoading(false));
   }, []);
+  useEffect(() => {
+    if (!auth.root) {
+      setMissions([]);
+      setDetail(null);
+      setProof(null);
+      setCaps([]);
+      return;
+    }
+    void perform(refresh);
+  }, [auth.root?.id]);
   useEffect(() => {
     if (!detail || terminal.includes(detail.mission.state)) return;
     const id = detail.mission.id;
@@ -186,7 +184,11 @@ function App() {
           </span>
           <span className="session-status">
             <span className="status-dot" />
-            {session?.root ? "Human verified" : "Verification required"}
+            {session.root
+              ? "Human verified"
+              : session.account
+                ? "Account connected"
+                : "Sign in required"}
           </span>
         </header>
         <main id="main">
@@ -209,9 +211,38 @@ function App() {
               </button>
             </div>
           )}
-          {loading ? (
+          {loading || auth.status === "loading" ? (
             <p role="status">Connecting to your workspace…</p>
-          ) : !session?.root ? (
+          ) : !auth.account ? (
+            <section className="onboarding" id="identity">
+              <div>
+                <span className="seal">
+                  <Mark />
+                </span>
+                <h2>Start with your passkey.</h2>
+                <p>
+                  Sign in with a JAW smart account to begin your HumanOS
+                  workspace.
+                </p>
+                <button
+                  disabled={
+                    busy || auth.status === "signing-in" || !auth.jawConfigured
+                  }
+                  onClick={() => void perform(auth.signIn)}
+                >
+                  {auth.status === "signing-in"
+                    ? "Signing in…"
+                    : "Sign in with JAW"}
+                </button>
+                {!auth.jawConfigured && (
+                  <p role="status" className="fine">
+                    JAW account sign-in is unavailable. Configure the public JAW
+                    key and backend Sepolia verification.
+                  </p>
+                )}
+              </div>
+            </section>
+          ) : !session.root ? (
             <section className="onboarding" id="identity">
               <div>
                 <span className="seal">
@@ -239,9 +270,8 @@ function App() {
                   {busy ? "Preparing verification…" : "Verify with World ID"}
                 </button>
                 <p className="fine">
-                  Proof of Human via World ID 4. No wallet signature is
-                  requested. A connected wallet is optional and does not
-                  establish human identity.
+                  Proof of Human via World ID 4 establishes your root after JAW
+                  sign-in.
                 </p>
               </div>
               <ol className="onboarding-steps">
@@ -710,21 +740,19 @@ function App() {
               </div>
             </>
           )}
-          <section className="wallet-section">
-            <h2>Wallet connection</h2>
-            <p className="fine">
-              Optional account connection for visibility. World ID establishes
-              your root; connecting a wallet grants no agent authority.
-            </p>
-            <button
-              className="secondary"
-              disabled={busy}
-              onClick={() => void perform(connectWallet)}
-            >
-              {wallet ? "Reconnect wallet" : "Connect wallet"}
-            </button>
-            {wallet && <p className="hash">{wallet}</p>}
-          </section>
+          {auth.account && (
+            <section className="wallet-section">
+              <h2>JAW account</h2>
+              <p className="hash">{auth.account.address}</p>
+              <button
+                className="secondary"
+                disabled={busy || auth.status === "signing-out"}
+                onClick={() => void perform(auth.signOut)}
+              >
+                {auth.status === "signing-out" ? "Signing out…" : "Sign out"}
+              </button>
+            </section>
+          )}
           <section className="connections" id="services">
             <h2>Connection status</h2>
             <p className="fine">
@@ -788,7 +816,7 @@ function App() {
           }}
           onSuccess={() => {
             setProof(null);
-            void perform(refresh);
+            void perform(auth.refresh);
           }}
           onError={(e) =>
             setError(`World verification did not complete: ${String(e)}`)
