@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS roots (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS nullifiers (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS sessions (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS missions (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS agents (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS actions (id text PRIMARY KEY, data jsonb NOT NULL, mission_id text GENERATED ALWAYS AS (data->>'missionId') STORED REFERENCES missions(id), created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS approvals (id text PRIMARY KEY, data jsonb NOT NULL, action_id text GENERATED ALWAYS AS (data->>'actionId') STORED REFERENCES actions(id), binding_hash text GENERATED ALWAYS AS (data->>'bindingHash') STORED UNIQUE NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS receipts (id text PRIMARY KEY, data jsonb NOT NULL, action_id text GENERATED ALWAYS AS (data->>'actionId') STORED UNIQUE NOT NULL REFERENCES actions(id), idempotency_key text GENERATED ALWAYS AS (data->>'idempotencyKey') STORED UNIQUE NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS audit (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS challenges (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS missions_root ON missions(root_id);
+CREATE INDEX IF NOT EXISTS actions_mission ON actions(mission_id);
+CREATE INDEX IF NOT EXISTS approvals_action ON approvals(action_id);

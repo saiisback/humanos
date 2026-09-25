@@ -1,0 +1,19 @@
+{
+  "name": "@humanos/database",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@humanos/schemas": "workspace:*",
+    "pg": "8.16.3",
+    "valibot": "1.1.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.5"
+  }
+}
