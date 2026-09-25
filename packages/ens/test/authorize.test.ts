@@ -3,7 +3,9 @@ import * as v from "valibot";
 import {
   createPublicClient,
   custom,
+  decodeFunctionResult,
   encodeFunctionData,
+  getAddress,
   http,
   keccak256,
   parseAbi,
@@ -29,13 +31,21 @@ import {
   dnsEncode,
   EnsAuthorizationError,
   EnsWriteError,
+  findResolver,
   nodeOf,
   readText,
+  rootLabelFor,
+  REGISTRY_ROLES,
+  RESOLVER_ROLES,
+  adminRole,
   TEXT_KEYS,
   type AuthorizationReader,
   type EnsWriter,
 } from "../src/index.js";
-import { permissionedResolverAbi } from "../src/abi/official.js";
+import {
+  permissionedRegistryAbi,
+  permissionedResolverAbi,
+} from "../src/abi/official.js";
 import {
   ANVIL_KEY_0,
   startLocalEnsv2,
@@ -51,6 +61,8 @@ let reader: AuthorizationReader;
 let writer: EnsWriter;
 let adapter: ReturnType<typeof createHumanOSEnsAdapter>;
 let chainNow: () => Promise<number>;
+const jawOwner = privateKeyToAccount(generatePrivateKey()).address;
+let operatorAddress: Address;
 
 const rpc = (method: string, params: unknown[] = []) =>
   client.request({ method: method as never, params: params as never });
@@ -105,6 +117,7 @@ beforeAll(async () => {
   chainNow = async () =>
     Number((await client.getBlock({ blockTag: "latest" })).timestamp);
   const operator = createPrivateKeyBackend(ANVIL_KEY_0, foundry, transport);
+  operatorAddress = operator.account.address;
   reader = createAuthorizationReader({
     client,
     chainId: foundry.id,
@@ -123,7 +136,6 @@ beforeAll(async () => {
   adapter = createHumanOSEnsAdapter({
     reader,
     writer,
-    operator,
     agentKeySeed: generatePrivateKey(),
     chain: foundry,
     transport,
@@ -144,7 +156,7 @@ async function registeredAndFinalized(
   caps: Capability[] = ["drafts.write", "calendar.create"],
 ) {
   const m = mission(id, `root-${id}`, caps, 7 * DAY, await chainNow());
-  const name = await adapter.register(m);
+  const name = await adapter.register(m, jawOwner);
   await finalize();
   return { m, name };
 }
@@ -158,8 +170,88 @@ describe("readAgentAuthorization against official ENSv2 contracts", () => {
       7 * DAY,
       await chainNow(),
     );
-    const name = await adapter.register(m);
+    const name = await adapter.register(m, jawOwner);
     expect(name).toMatch(/^m[0-9a-f]{16}\.r[0-9a-f]{16}\.humanos\.eth$/);
+    expect(jawOwner).not.toBe(operatorAddress);
+    const rootLabel = name.split(".")[1]!;
+    const rootName = name.slice(name.indexOf(".") + 1);
+    expect(
+      await client.readContract({
+        address: env.humanosRegistry,
+        abi: permissionedRegistryAbi,
+        functionName: "getOwner",
+        args: [BigInt(keccak256(toHex(rootLabel)))],
+      }),
+    ).toBe(jawOwner);
+    const { resolver: rootResolver } = await findResolver(
+      client,
+      env.universalResolver,
+      rootName,
+      await client.getBlockNumber(),
+    );
+    const addressRecord = await client.readContract({
+      address: rootResolver,
+      abi: permissionedResolverAbi,
+      functionName: "resolve",
+      args: [
+        dnsEncode(rootName),
+        encodeFunctionData({
+          abi: parseAbi(["function addr(bytes32 node) view returns (address)"]),
+          functionName: "addr",
+          args: [nodeOf(rootName)],
+        }),
+      ],
+    });
+    expect(
+      decodeFunctionResult({
+        abi: parseAbi(["function addr(bytes32 node) view returns (address)"]),
+        functionName: "addr",
+        data: addressRecord,
+      }),
+    ).toBe(jawOwner);
+    const registryRolesAbi = parseAbi([
+      "function roles(uint256 resource, address account) view returns (uint256)",
+    ]);
+    expect(
+      await client.readContract({
+        address: env.humanosRegistry,
+        abi: registryRolesAbi,
+        functionName: "roles",
+        args: [0n, jawOwner],
+      }),
+    ).toBe(0n);
+    expect(
+      await client.readContract({
+        address: env.humanosRegistry,
+        abi: registryRolesAbi,
+        functionName: "roles",
+        args: [0n, env.registrar],
+      }),
+    ).toBe(
+      REGISTRY_ROLES.REGISTRAR |
+        REGISTRY_ROLES.RENEW |
+        REGISTRY_ROLES.UNREGISTER,
+    );
+    expect(
+      await client.readContract({
+        address: rootResolver,
+        abi: permissionedResolverAbi,
+        functionName: "roles",
+        args: [0n, jawOwner],
+      }),
+    ).toBe(0n);
+    expect(
+      await client.readContract({
+        address: rootResolver,
+        abi: permissionedResolverAbi,
+        functionName: "roles",
+        args: [0n, env.registrar],
+      }),
+    ).toBe(
+      RESOLVER_ROLES.SET_TEXT |
+        adminRole(RESOLVER_ROLES.SET_TEXT) |
+        RESOLVER_ROLES.SET_ADDRESS,
+    );
 
     const pending = await reader.readAgentAuthorization(name);
     expect(pending).toMatchObject({
@@ -202,13 +294,19 @@ describe("readAgentAuthorization against official ENSv2 contracts", () => {
       await chainNow(),
     );
     const [a, b] = await Promise.all([
-      adapter.register(m),
-      adapter.register(m),
+      adapter.register(m, jawOwner),
+      adapter.register(m, jawOwner),
     ]);
     expect(a).toBe(b);
     const before = await client.getBlockNumber({ cacheTime: 0 });
-    expect(await adapter.register(m)).toBe(a); // no transaction on an identical retry
+    expect(await adapter.register(m, jawOwner)).toBe(a); // no transaction on an identical retry
     expect(await client.getBlockNumber({ cacheTime: 0 })).toBe(before);
+    await expect(
+      adapter.register(
+        m,
+        getAddress("0x2222222222222222222222222222222222222222"),
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
 
     await expect(
       writer.registerAgent({
@@ -220,6 +318,43 @@ describe("readAgentAuthorization against official ENSv2 contracts", () => {
         expiresAt: new Date(Date.parse(m.expiresAt)),
       }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it.each(["0x0000000000000000000000000000000000000000", "0x1234"])(
+    "rejects invalid root owner %s before any chain write",
+    async (invalidOwner) => {
+      const m = mission(
+        `mission-invalid-owner-${invalidOwner}`,
+        `root-invalid-${invalidOwner}`,
+        ["web.search"],
+        DAY,
+        await chainNow(),
+      );
+      const before = await client.getBlockNumber({ cacheTime: 0 });
+      await expect(adapter.register(m, invalidOwner)).rejects.toMatchObject({
+        code: "INVALID_INPUT",
+      });
+      expect(await client.getBlockNumber({ cacheTime: 0 })).toBe(before);
+    },
+  );
+
+  it("does not reuse an operator-owned root for a JAW account", async () => {
+    const m = mission(
+      "mission-operator-root",
+      "root-operator-owned",
+      ["web.search"],
+      DAY,
+      await chainNow(),
+    );
+    await writer.registerRoot({
+      label: rootLabelFor(m.rootId),
+      rootId: m.rootId,
+      owner: operatorAddress,
+      expiresAt: new Date(Number(await writer.parentExpiry()) * 1000),
+    });
+    await expect(adapter.register(m, jawOwner)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
   });
 
   it("revocation is effective at latest immediately, before finality", async () => {

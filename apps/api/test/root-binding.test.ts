@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Database, type SessionRecord } from "@humanos/database";
-import { hashCanonical, type RootAccountBinding } from "@humanos/schemas";
+import {
+  hashCanonical,
+  type Mission,
+  type RootAccountBinding,
+} from "@humanos/schemas";
 import { createApi, type ApiConfig } from "../src/app.js";
 import { WorldVerificationError } from "@humanos/world";
 
@@ -40,14 +44,14 @@ const app = createApi({ db, origin, world });
 beforeAll(() => db.migrate());
 afterAll(() => db.close());
 
-async function signedIn(seed: number) {
+async function signedIn(seed: number, chainId = 11155111) {
   const address = `0x${seed.toString(16).padStart(40, "0")}`;
-  const accountId = `11155111:${address}`;
+  const accountId = `${chainId}:${address}`;
   const token = randomUUID();
   await db.insert("accounts", {
     id: accountId,
     address,
-    chainId: 11155111,
+    chainId,
     createdAt: new Date().toISOString(),
   });
   await db.insert("sessions", {
@@ -56,8 +60,211 @@ async function signedIn(seed: number) {
     rootId: null,
     expiresAt: new Date(Date.now() + 600000).toISOString(),
   });
-  return { accountId, token, cookie: `humanos_session=${token}` };
+  return { accountId, address, token, cookie: `humanos_session=${token}` };
 }
+async function proposedMission(
+  user: Awaited<ReturnType<typeof signedIn>>,
+  binding: "matching" | "missing" | "different",
+) {
+  const stamp = new Date().toISOString();
+  const rootId = randomUUID();
+  await db.insert("roots", {
+    id: rootId,
+    ensName: null,
+    createdAt: stamp,
+    verificationEnvironment: "staging",
+  });
+  await db.put("sessions", {
+    id: hashCanonical(user.token),
+    accountId: user.accountId,
+    rootId,
+    expiresAt: new Date(Date.now() + 600000).toISOString(),
+  });
+  if (binding !== "missing") {
+    const boundRootId = binding === "matching" ? rootId : randomUUID();
+    if (binding === "different")
+      await db.insert("roots", {
+        id: boundRootId,
+        ensName: null,
+        createdAt: stamp,
+        verificationEnvironment: "staging",
+      });
+    await db.insert("root_bindings", {
+      id: randomUUID(),
+      accountId: user.accountId,
+      rootId: boundRootId,
+      createdAt: stamp,
+    });
+  }
+  const mission: Mission = {
+    id: randomUUID(),
+    rootId,
+    agentEns: null,
+    title: "A task",
+    goal: "Complete a task",
+    capabilities: ["drafts.write"],
+    approvedCapabilities: [],
+    steps: [],
+    state: "PROPOSED",
+    expiresAt: new Date(Date.now() + 600000).toISOString(),
+    createdAt: stamp,
+    updatedAt: stamp,
+    policyVersion: "humanos-policy-v1",
+  };
+  await db.insert("missions", mission);
+  return mission;
+}
+async function authorizeMission(
+  api: ReturnType<typeof createApi>,
+  user: Awaited<ReturnType<typeof signedIn>>,
+  mission: Mission,
+) {
+  return api.request(`/api/missions/${mission.id}/authorize`, {
+    method: "POST",
+    headers: {
+      origin,
+      cookie: user.cookie,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ approvedCapabilities: ["drafts.write"] }),
+  });
+}
+
+it("passes the durable bound JAW account as the ENS root owner", async () => {
+  const user = await signedIn(20);
+  const mission = await proposedMission(user, "matching");
+  const calls: Array<{ mission: Mission; rootOwner: string }> = [];
+  const api = createApi({
+    db,
+    origin,
+    ens: {
+      async register(registered, rootOwner) {
+        calls.push({ mission: registered, rootOwner });
+        return "agent.root.humanos.eth";
+      },
+      async revoke() {},
+      async readAuthorization() {
+        throw new Error("unused");
+      },
+    },
+  });
+  const response = await authorizeMission(api, user, mission);
+  expect(response.status, await response.clone().text()).toBe(200);
+  expect(calls).toEqual([
+    {
+      mission: expect.objectContaining({
+        id: mission.id,
+        rootId: mission.rootId,
+        approvedCapabilities: ["drafts.write"],
+      }),
+      rootOwner: user.address,
+    },
+  ]);
+});
+
+it.each([
+  ["missing binding", 21, "missing", 11155111],
+  ["different root", 22, "different", 11155111],
+  ["non-Sepolia account", 23, "matching", 1],
+  ["zero owner", 0, "matching", 11155111],
+] as const)(
+  "makes zero ENS calls for a %s",
+  async (_reason, seed, binding, chainId) => {
+    const user = await signedIn(seed, chainId);
+    const mission = await proposedMission(user, binding);
+    let calls = 0;
+    const api = createApi({
+      db,
+      origin,
+      ens: {
+        async register(_mission, _rootOwner) {
+          calls++;
+          return "agent.root.humanos.eth";
+        },
+        async revoke() {},
+        async readAuthorization() {
+          throw new Error("unused");
+        },
+      },
+    });
+    const response = await authorizeMission(api, user, mission);
+    expect(response.status).toBe(403);
+    expect((await response.json()).error.code).toBe(
+      "HUMAN_VERIFICATION_REQUIRED",
+    );
+    expect(calls).toBe(0);
+    expect((await db.get<Mission>("missions", mission.id))?.state).toBe(
+      "PROPOSED",
+    );
+  },
+);
+it("rechecks the durable binding after waiting for the mission lock", async () => {
+  const user = await signedIn(24);
+  const mission = await proposedMission(user, "matching");
+  let calls = 0;
+  const api = createApi({
+    db,
+    origin,
+    ens: {
+      async register(_mission, _rootOwner) {
+        calls++;
+        return "agent.root.humanos.eth";
+      },
+      async revoke() {},
+      async readAuthorization() {
+        throw new Error("unused");
+      },
+    },
+  });
+  let release!: () => void;
+  let locked!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const lockAcquired = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+  const holder = db.transaction(async (tx) => {
+    await tx.lockMission(mission.id);
+    locked();
+    await gate;
+  });
+  await lockAcquired;
+  const pending = authorizeMission(api, user, mission);
+  try {
+    let waiting = false;
+    for (let i = 0; i < 100; i++) {
+      const lockWait = await db.query(
+        "SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query='SELECT data FROM missions WHERE id=$1 FOR UPDATE' LIMIT 1",
+      );
+      if (lockWait.rowCount) {
+        waiting = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(
+      waiting,
+      "authorization must wait after its initial binding check",
+    ).toBe(true);
+    const binding = (await db.list<RootAccountBinding>("root_bindings")).find(
+      (row) => row.accountId === user.accountId,
+    )!;
+    await db.delete("root_bindings", binding.id);
+  } finally {
+    release();
+    await holder;
+  }
+  const response = await pending;
+  expect(response.status).toBe(403);
+  expect((await response.json()).error.code).toBe(
+    "HUMAN_VERIFICATION_REQUIRED",
+  );
+  expect(calls).toBe(0);
+  expect((await db.get<Mission>("missions", mission.id))?.state).toBe(
+    "PROPOSED",
+  );
+}, 10000);
 async function request(cookie: string) {
   const response = await app.request("/api/world/root/request", {
     method: "POST",

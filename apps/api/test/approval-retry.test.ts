@@ -404,9 +404,11 @@ it("refuses cancelled approval refresh and another session takeover", async () =
 });
 it("serializes concurrent authorization before calling ENS", async () => {
   let calls = 0;
+  const rootOwners: string[] = [];
   const ens: NonNullable<ApiConfig["ens"]> = {
-    register: async () => {
+    register: async (_mission, rootOwner) => {
       calls++;
+      rootOwners.push(rootOwner);
       await new Promise((r) => setTimeout(r, 30));
       return "a.eth";
     },
@@ -427,6 +429,7 @@ it("serializes concurrent authorization before calling ENS", async () => {
   );
   expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
   expect(calls).toBe(1);
+  expect(rootOwners).toEqual([s.accountId.split(":")[1]]);
 });
 it("revocation waits for in-flight registration and leaves mission revoked", async () => {
   let started!: () => void, release!: () => void;
@@ -438,7 +441,7 @@ it("revocation waits for in-flight registration and leaves mission revoked", asy
   });
   let revoked = false;
   const ens: NonNullable<ApiConfig["ens"]> = {
-    register: async () => {
+    register: async (_mission, _rootOwner) => {
       started();
       await gate;
       return "a.eth";

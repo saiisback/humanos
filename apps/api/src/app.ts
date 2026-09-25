@@ -44,7 +44,7 @@ import {
 } from "./services/execute-sensitive-action.js";
 import { isSiweVerificationError, type SiweVerifier } from "./services/siwe.js";
 export interface EnsAdapter {
-  register: (mission: Mission) => Promise<string>;
+  register: (mission: Mission, rootOwner: string) => Promise<string>;
   revoke: (mission: Mission) => Promise<void>;
   readAuthorization: (name: string) => Promise<AgentAuthorization>;
 }
@@ -706,6 +706,7 @@ export function createApi(config: ApiConfig) {
   });
   app.post("/api/missions/:id/authorize", async (c) => {
     const m = await owner(c, c.req.param("id"));
+    const s = await linkedSession(c);
     const input = v.parse(AuthorizeMissionRequestSchema, await c.req.json());
     const next = await db.transaction(async (tx) => {
       const fresh = await tx.lockMission(m.id);
@@ -715,6 +716,42 @@ export function createApi(config: ApiConfig) {
         input.approvedCapabilities.some((x) => !fresh.capabilities.includes(x))
       )
         throw new HttpError(409, "CONFLICT");
+      const liveSession = await tx.query<{ data: SessionRecord }>(
+        "SELECT data FROM sessions WHERE id=$1 FOR UPDATE",
+        [s.id],
+      );
+      const currentSession = liveSession.rows[0]?.data;
+      if (
+        !currentSession ||
+        currentSession.accountId !== s.accountId ||
+        currentSession.rootId !== fresh.rootId ||
+        Date.parse(currentSession.expiresAt) <= Date.now()
+      )
+        throw new HttpError(401, "UNAUTHENTICATED");
+      const accountRow = await tx.query<{ data: WalletAccount }>(
+        "SELECT data FROM accounts WHERE id=$1 FOR UPDATE",
+        [s.accountId],
+      );
+      const account = accountRow.rows[0]?.data;
+      const binding = await tx.query<{
+        data: { rootId: string; accountId: string };
+      }>("SELECT data FROM root_bindings WHERE account_id=$1", [s.accountId]);
+      let rootOwner: string;
+      try {
+        rootOwner = normalizeWalletAddress(account?.address ?? "");
+      } catch {
+        throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+      }
+      if (
+        !account ||
+        account.chainId !== 11155111 ||
+        account.address !== rootOwner ||
+        account.id !== `${account.chainId}:${rootOwner}` ||
+        /^0x0{40}$/.test(rootOwner) ||
+        binding.rows[0]?.data.accountId !== account.id ||
+        binding.rows[0]?.data.rootId !== fresh.rootId
+      )
+        throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
       const approved = {
         ...fresh,
         approvedCapabilities: [...input.approvedCapabilities],
@@ -725,7 +762,10 @@ export function createApi(config: ApiConfig) {
       Object.freeze(registration.approvedCapabilities);
       Object.freeze(registration.steps);
       Object.freeze(registration);
-      const agentEns = await requireService(config.ens).register(registration);
+      const agentEns = await requireService(config.ens).register(
+        registration,
+        rootOwner,
+      );
       const value = {
         ...approved,
         agentEns,
