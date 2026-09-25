@@ -31,6 +31,15 @@ export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
     chain: sepolia,
     transport: http(rpcUrl),
   });
+  async function requireSepoliaRpc(): Promise<void> {
+    let chainId: number;
+    try {
+      chainId = await client.getChainId();
+    } catch {
+      throw new SiweVerificationError("unavailable");
+    }
+    if (chainId !== sepolia.id) throw new SiweVerificationError("unavailable");
+  }
   return {
     async verify({ message, signature }) {
       const parsed = parseSiweMessage(message);
@@ -40,6 +49,7 @@ export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
         !/^0x[0-9a-fA-F]+$/.test(signature)
       )
         throw new SiweVerificationError("invalid_signature");
+      await requireSepoliaRpc();
       // viem verifies EOAs, ERC-1271 contracts and undeployed ERC-6492 accounts.
       let valid: boolean;
       try {
@@ -50,7 +60,12 @@ export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
       } catch {
         throw new SiweVerificationError("unavailable");
       }
-      if (!valid) throw new SiweVerificationError("invalid_signature");
+      if (!valid) {
+        // viem can turn a failed ERC-6492 eth_call into false. Probe the RPC
+        // again so a transport outage cannot be reported as a bad signature.
+        await requireSepoliaRpc();
+        throw new SiweVerificationError("invalid_signature");
+      }
       return { address: parsed.address, chainId: parsed.chainId };
     },
   };
