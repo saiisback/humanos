@@ -15,6 +15,7 @@ import type {
 import { hashCanonical } from "@humanos/schemas";
 import { tableName, validateEntity, type Table } from "./schema.js";
 export * from "./schema.js";
+export { WorkflowStore, type WorkflowLease } from "./workflows.js";
 interface Runner {
   query<T extends QueryResultRow = QueryResultRow>(
     sql: string,
@@ -211,15 +212,18 @@ export class Database extends Repository {
   }
   async migrate(): Promise<void> {
     await this.query(`CREATE SCHEMA IF NOT EXISTS "${this.schema}"`);
-    const sql = await readFile(
-      new URL("../migrations/0001_initial.sql", import.meta.url),
-      "utf8",
-    );
     await this.transaction(async (tx) => {
       await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         this.schema + ":humanos:migrations",
       ]);
-      await tx.query(sql);
+      for (const file of ["0001_initial.sql", "0002_workflows.sql"]) {
+        await tx.query(
+          await readFile(
+            new URL(`../migrations/${file}`, import.meta.url),
+            "utf8",
+          ),
+        );
+      }
     });
   }
   async close(): Promise<void> {
