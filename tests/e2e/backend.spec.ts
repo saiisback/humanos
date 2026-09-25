@@ -204,3 +204,23 @@ test("REAL API + PostgreSQL, provider fixtures: pending verification retries an 
   await page.reload();
   await expect(page.locator(".action-review .badge")).toHaveText("verified");
 });
+
+test("REAL API + PostgreSQL, provider fixtures: cancellation after verified approval rejects without effect", async ({
+  page,
+}) => {
+  const id = await prepare(page);
+  const action = await verifyFixture(page, id);
+  await expect(page.locator(".action-review .badge")).toHaveText("verified");
+  await page.getByRole("button", { name: "Cancel action" }).click();
+  await expect(page.getByRole("status")).toContainText("rejected");
+  await expect(page.locator(".action-review .badge")).toHaveText("cancelled");
+  await expect(
+    page.getByRole("button", { name: "Execute approved action" }),
+  ).toHaveCount(0);
+  const denied = await page.request.post(
+    `${backend.url}/api/actions/${action.id}/execute`,
+    { data: {} },
+  );
+  expect(denied.ok()).toBeFalsy();
+  expect(backend.effects.has(action.id)).toBeFalsy();
+});

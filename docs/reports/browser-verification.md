@@ -49,3 +49,16 @@ All links point to preserved local files outside git:
 Desktop/mobile mission and live onboarding screenshots are copied into `/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-final/screenshots/`. Individual test directories contain the remaining videos. The first attempt's failure traces remain in its separate directory; do not confuse those with the passing final recording run.
 
 Configuration ESLint and Prettier checks passed. No product code, dependencies or binary artifacts were changed in this recording task.
+
+## Follow-up: cancelling a verified action
+
+The recorded targeted regression passed **2/2** on desktop/mobile after the API cancellation fix. It verifies a proof through the actual harness API, observes VERIFIED, clicks Cancel action, observes REJECTED and CANCELLED, then verifies that another execution request is denied and the effect transport was never called. The same provider-fixture boundary applies.
+
+```sh
+HUMANOS_RECORD=1 HUMANOS_RECORD_DIR=/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924 pnpm exec playwright test backend.spec.ts -g 'cancellation after verified approval'
+```
+
+The suite now contains 40 cases. The earlier full recording was 38/38; this follow-up ran only the two new cases, without claiming a new 40-case full run.
+
+- [Mobile verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-mobile/video.webm)
+- [Desktop verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-desktop/video.webm)
