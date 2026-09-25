@@ -6,3 +6,5 @@ export * from "./config.js";
 export * from "./adapter.js";
 export { ENSV2_SEPOLIA } from "./deployments.js";
 export { humanosRegistrarAbi } from "./abi/humanosRegistrar.js";
+
+export * from "./transaction-journal.js";

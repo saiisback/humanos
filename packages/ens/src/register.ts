@@ -3,6 +3,7 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   createWalletClient,
+  encodeFunctionData,
   isHex,
   keccak256,
   toHex,
@@ -27,6 +28,7 @@ import {
   TEXT_KEYS,
   type AgentWritableKey,
 } from "./roles.js";
+import type { TransactionJournal } from "./transaction-journal.js";
 import { dnsEncode, isValidLabel, nodeOf } from "./resolve.js";
 
 export type EnsWriteErrorCode =
@@ -84,25 +86,6 @@ export function deriveAgentPrivateKey(seed: string, missionId: string): Hex {
   return `0x${key}`;
 }
 
-/**
- * Per-account write lock: simulate, send and confirm run one at a time per signing key inside this
- * process, so concurrent callers never race on nonces and each simulation sees the previous write.
- * Multiple processes must not share an operator key.
- */
-const accountLocks = new Map<string, Promise<unknown>>();
-function withAccountLock<T>(address: string, fn: () => Promise<T>): Promise<T> {
-  const key = address.toLowerCase();
-  const previous = accountLocks.get(key) ?? Promise.resolve();
-  const run = previous.catch(() => undefined).then(fn);
-  accountLocks.set(key, run);
-  void run
-    .finally(() => {
-      if (accountLocks.get(key) === run) accountLocks.delete(key);
-    })
-    .catch(() => undefined);
-  return run;
-}
-
 export interface WriteResult {
   node: Hex;
   /** null when the call was an idempotent no-op (state already as requested). */
@@ -116,6 +99,9 @@ export interface EnsWriterConfig {
   operator: PrivateKeyBackend;
   /** Confirmations to await per transaction. */
   confirmations?: number;
+  journal: TransactionJournal;
+  /** Bounded confirmation wait; pending transactions remain journaled for retry. */
+  receiptTimeoutMs?: number;
 }
 
 const toSeconds = (date: Date): bigint => {
@@ -154,37 +140,116 @@ export function createEnsWriter(config: EnsWriterConfig) {
   const { client, registrar, operator } = config;
   const confirmations = config.confirmations ?? 1;
 
+  async function publish(
+    backend: PrivateKeyBackend,
+    operation: string,
+    prepareIntent: () => Promise<{ to: Address; data?: Hex; value?: bigint }>,
+  ): Promise<{ hash: Hash; blockNumber: bigint }> {
+    if (!config.journal)
+      throw new EnsWriteError(
+        "UNAVAILABLE",
+        "ENS transaction journal required",
+      );
+    const chainId = backend.wallet.chain.id;
+    const entry = await config.journal.reserve(
+      {
+        operation: keccak256(
+          toHex(
+            `${chainId}:${backend.account.address.toLowerCase()}:${operation}`,
+          ),
+        ),
+        chainId,
+        signer: backend.account.address,
+      },
+      async (floor) => {
+        const intent = await prepareIntent();
+        const pending = await client.getTransactionCount({
+          address: backend.account.address,
+          blockTag: "pending",
+        });
+        const nonce = Math.max(pending, floor ?? 0);
+        const prepared = await backend.wallet.prepareTransactionRequest({
+          ...intent,
+          nonce,
+        });
+        const raw = await backend.wallet.signTransaction(prepared);
+        return { nonce, raw };
+      },
+    );
+    if (entry.reverted)
+      throw new EnsWriteError("REVERTED", `transaction ${entry.hash} reverted`);
+    // Missing receipts and transport failures never permit signing another transaction.
+    let receipt = await client
+      .getTransactionReceipt({ hash: entry.hash })
+      .catch(() => null);
+    let broadcastError: unknown;
+    if (!receipt) {
+      try {
+        const hash = await client.sendRawTransaction({
+          serializedTransaction: entry.raw,
+        });
+        if (hash !== entry.hash)
+          throw new Error("ENS_TRANSACTION_HASH_MISMATCH");
+      } catch (error) {
+        broadcastError = error;
+        // Already-known / nonce-too-low may mean this identical transaction was mined.
+        // Confirmation below is authoritative; any other broadcast failure remains pending.
+      }
+    }
+    try {
+      const confirmed =
+        receipt &&
+        (confirmations <= 1 ||
+          (await client.getBlockNumber({ cacheTime: 0 })) >=
+            receipt.blockNumber + BigInt(confirmations - 1));
+      if (!confirmed)
+        receipt = await client.waitForTransactionReceipt({
+          hash: entry.hash,
+          confirmations,
+          timeout: config.receiptTimeoutMs ?? 60_000,
+        });
+    } catch (error) {
+      throw new EnsWriteError(
+        "UNAVAILABLE",
+        `receipt for ${entry.hash} unavailable`,
+        undefined,
+        { cause: broadcastError ?? error },
+      );
+    }
+    if (!receipt)
+      throw new EnsWriteError(
+        "UNAVAILABLE",
+        `receipt for ${entry.hash} unavailable`,
+      );
+    if (receipt.status !== "success") {
+      await config.journal.markReverted(entry.hash);
+      throw new EnsWriteError("REVERTED", `transaction ${entry.hash} reverted`);
+    }
+    return { hash: entry.hash, blockNumber: receipt.blockNumber };
+  }
+
   function send(
     backend: PrivateKeyBackend,
     request: Parameters<PublicClient["simulateContract"]>[0],
   ): Promise<{ hash: Hash; blockNumber: bigint }> {
-    return withAccountLock(backend.account.address, async () => {
-      let hash: Hash;
-      try {
-        const { request: prepared } = await client.simulateContract({
-          ...request,
-          account: backend.account,
-        });
-        hash = await backend.wallet.writeContract(
-          prepared as Parameters<typeof backend.wallet.writeContract>[0],
-        );
-      } catch (error) {
-        throw decodeRevert(error);
-      }
-      const receipt = await client
-        .waitForTransactionReceipt({ hash, confirmations })
-        .catch((error: unknown) => {
-          throw new EnsWriteError(
-            "UNAVAILABLE",
-            `receipt for ${hash} unavailable`,
-            undefined,
-            { cause: error },
-          );
-        });
-      if (receipt.status !== "success")
-        throw new EnsWriteError("REVERTED", `transaction ${hash} reverted`);
-      return { hash, blockNumber: receipt.blockNumber };
-    });
+    const data = encodeFunctionData(
+      request as Parameters<typeof encodeFunctionData>[0],
+    );
+    return publish(
+      backend,
+      `${request.address.toLowerCase()}:${data}`,
+      async () => {
+        try {
+          await client.simulateContract({
+            ...request,
+            account: backend.account,
+          });
+        } catch (error) {
+          throw decodeRevert(error);
+        }
+        return { to: request.address, data };
+      },
+    );
   }
 
   const registrarCall = (functionName: string, args: readonly unknown[]) =>
@@ -422,35 +487,31 @@ export function createEnsWriter(config: EnsWriterConfig) {
       }
     },
 
-    /**
-     * Tops `account` up to `minBalance` from the operator. Runs under the operator's write lock,
-     * re-reading the balance inside it, so concurrent requests send at most one top-up and never
-     * collide with registration nonces.
-     */
-    fundAccount(
+    /** A one-time initial funding intent per target and account, durable across retries. */
+    async fundAccount(
       account: Address,
       minBalance: bigint,
     ): Promise<{ hash: Hash | null; blockNumber: bigint | null }> {
-      return withAccountLock(operator.account.address, async () => {
-        const balance = await client.getBalance({ address: account });
-        if (balance >= minBalance) return { hash: null, blockNumber: null };
-        let hash: Hash;
-        try {
-          hash = await operator.wallet.sendTransaction({
-            to: account,
-            value: minBalance - balance,
-          });
-        } catch (error) {
-          throw decodeRevert(error);
-        }
-        const receipt = await client.waitForTransactionReceipt({
-          hash,
-          confirmations,
-        });
-        if (receipt.status !== "success")
-          throw new EnsWriteError("REVERTED", `funding ${hash} failed`);
-        return { hash, blockNumber: receipt.blockNumber };
-      });
+      try {
+        return await publish(
+          operator,
+          `initial-funding:${account.toLowerCase()}:${minBalance}`,
+          async () => {
+            // This callback runs inside the durable per-signer lock, before signing.
+            const balance = await client.getBalance({ address: account });
+            if (balance >= minBalance)
+              throw new Error("ENS_FUNDING_NOT_NEEDED");
+            return { to: account, value: minBalance - balance };
+          },
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "ENS_FUNDING_NOT_NEEDED"
+        )
+          return { hash: null, blockNumber: null };
+        throw error;
+      }
     },
 
     async renewRoot(rootNode: Hex, expiresAt: Date): Promise<WriteResult> {

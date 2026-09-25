@@ -4,7 +4,11 @@ import { createWorldVerifier } from "@humanos/world";
 import { createDeepSeekClient, createJevClient } from "@humanos/models";
 import { createSideEffectClient } from "@humanos/tools";
 import { createApi, type ApiConfig } from "./app.js";
-import { createEnsAdapterFromEnv } from "@humanos/ens";
+import {
+  createEnsAdapterFromEnv,
+  createPostgresTransactionJournal,
+  initializeEnsTransactionJournal,
+} from "@humanos/ens";
 import { createEnsReceiptPublisher } from "./ens-receipts.js";
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL required");
@@ -55,9 +59,18 @@ if (
   process.env.ENS_OPERATOR_PRIVATE_KEY &&
   process.env.ENS_AGENT_KEY_SEED
 ) {
-  const ens = createEnsAdapterFromEnv(process.env);
+  // Separate pool: execution holds mission/action locks in the primary pool.
+  const ensDb = new Database(databaseUrl);
+  await initializeEnsTransactionJournal(ensDb);
+  const ens = createEnsAdapterFromEnv(
+    process.env,
+    createPostgresTransactionJournal(ensDb),
+  );
   config.ens = ens;
-  config.updateEnsReceipt = createEnsReceiptPublisher({ db, ensAdapter: ens });
+  config.updateEnsReceipt = createEnsReceiptPublisher({
+    db: ensDb,
+    ensAdapter: ens,
+  });
 }
 const app = createApi(config);
 serve({

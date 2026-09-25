@@ -20,6 +20,7 @@ import {
   type EnsWriter,
   type PrivateKeyBackend,
 } from "./register.js";
+import type { TransactionJournal } from "./transaction-journal.js";
 import { nodeOf } from "./resolve.js";
 
 /** Structural match for apps/api EnsAdapter. */
@@ -147,7 +148,10 @@ export function createHumanOSEnsAdapter(options: HumanOSEnsAdapterOptions) {
  */
 export function createEnsAdapterFromEnv(
   env: Record<string, string | undefined>,
+  journal: TransactionJournal,
 ) {
+  if (!journal?.durable)
+    throw new EnsWriteError("UNAVAILABLE", "durable ENS journal required");
   const config = loadEnsEnvConfig(env, { requireWrites: true });
   const client = createEnsPublicClient(config);
   const transport = http(config.rpcUrl);
@@ -167,6 +171,7 @@ export function createEnsAdapterFromEnv(
     registrar: config.registrar,
     operator,
     confirmations: config.confirmations,
+    journal,
   });
   return createHumanOSEnsAdapter({
     reader,

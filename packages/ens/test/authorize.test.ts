@@ -42,6 +42,8 @@ import {
   type LocalDeployment,
 } from "./helpers/anvil.js";
 
+import { createMemoryJournal } from "./helpers/memory-journal.js";
+
 const DAY = 86_400;
 let env: LocalDeployment;
 let client: PublicClient;
@@ -111,7 +113,13 @@ beforeAll(async () => {
     // The chain clock moves with evm_increaseTime; keep the reader's clock on chain time.
     now: () => new Date(Date.now() + clockSkewMs),
   });
-  writer = createEnsWriter({ client, registrar: env.registrar, operator });
+  writer = createEnsWriter({
+    client,
+    registrar: env.registrar,
+    operator,
+    journal: createMemoryJournal(),
+    receiptTimeoutMs: 2000,
+  });
   adapter = createHumanOSEnsAdapter({
     reader,
     writer,
@@ -633,6 +641,8 @@ describe("readAgentAuthorization against official ENSv2 contracts", () => {
       http(env.rpcUrl),
     );
     const intruderWriter = createEnsWriter({
+      journal: createMemoryJournal(),
+      receiptTimeoutMs: 2000,
       client,
       registrar: env.registrar,
       operator: intruder,
@@ -718,7 +728,7 @@ describe("registration binding and nonce regression coverage", () => {
       writer.fundAccount(destination, amount),
       writer.registerRoot(input),
     ]);
-    expect([one, two].filter((x) => x.hash !== null)).toHaveLength(1);
+    expect(new Set([one.hash, two.hash].filter(Boolean)).size).toBe(1);
     expect(await client.getBalance({ address: destination })).toBe(amount);
     expect(root.hash).not.toBeNull();
     const funded = [one, two].find((x) => x.hash)!;
@@ -740,7 +750,7 @@ describe("registration binding and nonce regression coverage", () => {
       writer.registerRoot(input),
     ]);
     expect(a.node).toBe(b.node);
-    expect([a, b].filter((x) => x.hash !== null)).toHaveLength(1);
+    expect(new Set([a.hash, b.hash].filter(Boolean)).size).toBe(1);
   });
   it("rejects expired root and agent retries without resurrection", async () => {
     const owner = privateKeyToAccount(ANVIL_KEY_0).address;

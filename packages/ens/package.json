@@ -14,5 +14,8 @@
     "@humanos/schemas": "workspace:*",
     "valibot": "1.1.0",
     "viem": "2.56.8"
+  },
+  "devDependencies": {
+    "@humanos/database": "workspace:*"
   }
 }
