@@ -8,6 +8,7 @@ coverage/
 playwright-report/
 test-results/
 .DS_Store
+.certs/
 *.log
 packages/contracts/cache/
 packages/contracts/broadcast/

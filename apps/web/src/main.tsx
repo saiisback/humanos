@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { mountApp } from "./mount";
 import type {
   ApprovalRequestResponse,
   Capability,
@@ -43,6 +43,7 @@ function App() {
   });
   const [caps, setCaps] = useState<Capability[]>([]);
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [proof, setProof] = useState<{
@@ -255,7 +256,11 @@ function App() {
           <Composer
             value={goal}
             onChange={setGoal}
-            onSubmit={() => void perform(createMission)}
+            onSubmit={() => {
+              setCreating(true);
+              void perform(createMission).finally(() => setCreating(false));
+            }}
+            preparing={creating}
             disabled={busy || !auth.root}
             canSubmit={!!auth.root}
             providerNote={providerNote}
@@ -385,4 +390,4 @@ function App() {
     </>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+mountApp(document.getElementById("root")!, <App />, import.meta.hot?.data ?? {});

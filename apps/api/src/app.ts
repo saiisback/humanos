@@ -35,7 +35,11 @@ import {
   POLICY_VERSION,
   classifyStatic,
 } from "@humanos/policy";
-import { JEV_MODEL, JEV_QUESTION_VERSION } from "@humanos/models";
+import {
+  JEV_MODEL,
+  JEV_QUESTION_VERSION,
+  ModelUnavailableError,
+} from "@humanos/models";
 import {
   approvalBinding,
   WorldVerificationError,
@@ -129,6 +133,21 @@ export function createApi(config: ApiConfig) {
     message: string,
   ) => c.json({ error: { code, message } }, status);
   app.onError((e, c) => {
+    if (e instanceof ModelUnavailableError) {
+      const messages = {
+        MODEL_CREDITS_REQUIRED:
+          "The model provider needs credits. Top up the configured provider account, then retry.",
+        MODEL_AUTH_FAILED:
+          "The model provider rejected its API credentials. Check the server configuration.",
+        MODEL_RATE_LIMITED:
+          "The model provider is rate limiting requests. Please try again shortly.",
+        MODEL_TIMEOUT:
+          "The model response timed out. No task action was executed; please retry.",
+        MODEL_UNAVAILABLE:
+          "The model response could not be validated. No task action was executed; please retry.",
+      };
+      return error(c, 503, e.code, messages[e.code]);
+    }
     if (e instanceof PermissionError)
       return error(c, e.status, e.code, e.message);
     if (e instanceof HttpError) return error(c, e.status, e.code, e.message);
@@ -681,16 +700,29 @@ export function createApi(config: ApiConfig) {
   app.post("/api/missions", async (c) => {
     const s = await linkedSession(c);
     const input = v.parse(CreateMissionRequestSchema, await c.req.json());
-    const proposed = await requireService(config.models).proposeMission(input);
-    const expiresAt = input.expiresAt ?? proposed.expiresAt;
+    // Authority duration comes from deterministic server policy, never model text.
+    const requestedAt = Date.now();
+    const expiresAt =
+      input.expiresAt ?? new Date(requestedAt + 3600000).toISOString();
     if (
-      Date.parse(expiresAt) <= Date.now() ||
-      Date.parse(expiresAt) > Date.now() + 86400000
+      Date.parse(expiresAt) <= requestedAt ||
+      Date.parse(expiresAt) > requestedAt + 86400000
     )
       throw new HttpError(
         400,
         "INVALID_REQUEST",
         "Mission expiry must be within 24 hours.",
+      );
+    const proposed = await requireService(config.models).proposeMission({
+      ...input,
+      expiresAt,
+      currentTime: new Date(requestedAt).toISOString(),
+    });
+    if (Date.parse(expiresAt) <= Date.now())
+      throw new HttpError(
+        400,
+        "INVALID_REQUEST",
+        "Mission expired while preparing the proposal. Choose a later deadline.",
       );
     const stamp = new Date().toISOString();
     const m: Mission = {

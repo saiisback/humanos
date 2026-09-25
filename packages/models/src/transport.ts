@@ -7,7 +7,14 @@ export interface ModelConfig {
   log?: (event: Readonly<Record<string, string>>) => void;
 }
 export class ModelUnavailableError extends Error {
-  constructor() {
+  constructor(
+    public readonly code:
+      | "MODEL_UNAVAILABLE"
+      | "MODEL_AUTH_FAILED"
+      | "MODEL_CREDITS_REQUIRED"
+      | "MODEL_RATE_LIMITED"
+      | "MODEL_TIMEOUT" = "MODEL_UNAVAILABLE",
+  ) {
     super("Model integration unavailable");
     this.name = "ModelUnavailableError";
   }
@@ -33,6 +40,7 @@ export async function requestJson(
   body: unknown,
 ): Promise<unknown> {
   if (!config.apiKey?.trim()) throw new ModelUnavailableError();
+  let lastError = new ModelUnavailableError();
   for (let attempt = 0; attempt <= (config.retries ?? 1); attempt++) {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -49,11 +57,21 @@ export async function requestJson(
             signal: controller.signal,
             redirect: "error",
           });
-          if (!response.ok)
+          if (!response.ok) {
+            lastError = new ModelUnavailableError(
+              response.status === 401 || response.status === 403
+                ? "MODEL_AUTH_FAILED"
+                : response.status === 402
+                  ? "MODEL_CREDITS_REQUIRED"
+                  : response.status === 429
+                    ? "MODEL_RATE_LIMITED"
+                    : "MODEL_UNAVAILABLE",
+            );
             return {
               retry: response.status === 429 || response.status >= 500,
               data: null,
             };
+          }
           const text = await response.text();
           if (text.length > 1_000_000) throw new Error();
           return { retry: false, data: JSON.parse(text) as unknown };
@@ -61,20 +79,21 @@ export async function requestJson(
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             controller.abort();
-            reject(new ModelUnavailableError());
+            reject(new ModelUnavailableError("MODEL_TIMEOUT"));
           }, config.timeoutMs ?? 15000);
         }),
       ]);
       if (result.data !== null) return result.data;
-      if (!result.retry) throw new ModelUnavailableError();
+      if (!result.retry) throw lastError;
     } catch (error) {
-      if (error instanceof ModelUnavailableError || controller.signal.aborted)
-        throw new ModelUnavailableError();
+      if (controller.signal.aborted)
+        throw new ModelUnavailableError("MODEL_TIMEOUT");
+      if (error instanceof ModelUnavailableError) throw error;
     } finally {
       if (timer) clearTimeout(timer);
     }
     if (attempt < (config.retries ?? 1))
       await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
   }
-  throw new ModelUnavailableError();
+  throw lastError;
 }

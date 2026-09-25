@@ -1,7 +1,8 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createProtectedApp } from "../src/http.js";
 import { canPrepareMission, prepareNextAction } from "../src/mission.js";
+afterEach(() => vi.unstubAllEnvs());
 const cfg = {
   apiUrl: "http://localhost:3001",
   webOrigin: "http://localhost:3000",
@@ -132,13 +133,36 @@ it("prepares only captured mission through protected API, propagates denial", as
     prepareNextAction("m", cfg, async () => new Response("", { status: 403 })),
   ).rejects.toThrow();
 });
-it("registers exact current DeepSeek model and excludes retired alias", async () => {
-  const { humanOSDeepSeekProvider } = await import("../src/provider.js");
+it.each([
+  {
+    name: "direct provider when OpenCode key is absent",
+    key: undefined,
+    model: "deepseek-flash",
+    baseUrl: "https://api.deepseek.com",
+  },
+  {
+    name: "direct provider when OpenCode key is blank",
+    key: "   ",
+    model: "deepseek-flash",
+    baseUrl: "https://api.deepseek.com",
+  },
+  {
+    name: "OpenCode provider when its key is configured",
+    key: "test-opencode-key",
+    model: "deepseek-v4.1-flash",
+    baseUrl: "https://opencode.ai/zen/v1",
+  },
+])("registers the $name", async ({ key, model, baseUrl }) => {
+  vi.stubEnv("OPENCODE_API_KEY", key);
+  const { humanOSDeepSeekProvider, humanOSDeepSeekModelId } = await import(
+    "../src/provider.js"
+  );
+  expect(humanOSDeepSeekModelId()).toBe(model);
   expect(
     humanOSDeepSeekProvider()
       .getModels()
-      .map((m) => m.id),
-  ).toEqual(["deepseek-flash"]);
+      .map(({ id, baseUrl }) => ({ id, baseUrl })),
+  ).toEqual([{ id: model, baseUrl }]);
 });
 it("rejects initialData even on abort surface", async () => {
   const response = await app().request("/agents/humanos/m/abort", {

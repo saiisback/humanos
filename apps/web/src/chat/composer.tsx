@@ -5,6 +5,7 @@ export function Composer({
   disabled,
   canSubmit,
   providerNote,
+  preparing = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -12,12 +13,14 @@ export function Composer({
   disabled: boolean;
   canSubmit: boolean;
   providerNote: string;
+  preparing?: boolean;
 }) {
   return (
     <form
       className="composer"
       onSubmit={(event) => {
         event.preventDefault();
+        if (disabled || preparing || !canSubmit || !value.trim()) return;
         onSubmit();
       }}
     >
@@ -33,14 +36,24 @@ export function Composer({
         placeholder="Describe a task…"
       />
       <div className="composer-bottom">
-        <span className="fine">{providerNote}</span>
+        <span className="fine" role="status">
+          {preparing ? "Preparing your task…" : providerNote}
+        </span>
         <button
-          aria-label="Send · Create mission"
+          aria-label={
+            preparing ? "Preparing your task" : "Send · Create mission"
+          }
           title="Send · Create mission"
           type="submit"
-          disabled={disabled || !canSubmit || !value.trim()}
+          disabled={disabled || preparing || !canSubmit || !value.trim()}
         >
-          Send <span aria-hidden="true">↗</span>
+          {preparing ? (
+            "Preparing…"
+          ) : (
+            <>
+              Send <span aria-hidden="true">↗</span>
+            </>
+          )}
         </button>
       </div>
     </form>
