@@ -7,7 +7,9 @@ test("HTTP fixture: reload resumes persisted mission detail from server", async 
   await createAndRun(page);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Tokyo application", exact: true }),
+    page
+      .getByRole("list", { name: "Mission conversation" })
+      .getByText("Tokyo application", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "submit application", exact: true }),

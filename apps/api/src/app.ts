@@ -3,9 +3,12 @@ import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
+import { parseSiweMessage } from "viem/siwe";
 import { Database, type SessionRecord } from "@humanos/database";
 import {
   hashCanonical,
+  normalizeWalletAddress,
+  VerifySiweRequestSchema,
   CreateMissionRequestSchema,
   AuthorizeMissionRequestSchema,
   VerifyWorldRequestSchema,
@@ -21,6 +24,10 @@ import {
   type AgentAuthorization,
   type MissionProposal,
   type ActionProposalDraft,
+  type WalletAccount,
+  type JawPermissionReview,
+  type JawPermissionGrant,
+  type JawPermissionVerifier,
 } from "@humanos/schemas";
 import {
   authorize,
@@ -29,19 +36,30 @@ import {
   classifyStatic,
 } from "@humanos/policy";
 import { JEV_MODEL, JEV_QUESTION_VERSION } from "@humanos/models";
-import { approvalBinding, type createWorldVerifier } from "@humanos/world";
+import {
+  approvalBinding,
+  WorldVerificationError,
+  type createWorldVerifier,
+} from "@humanos/world";
 import {
   createExecutor,
   type ExecutionDependencies,
 } from "./services/execute-sensitive-action.js";
+import { isSiweVerificationError, type SiweVerifier } from "./services/siwe.js";
+import {
+  createPermissionService,
+  PermissionError,
+} from "./services/jaw-permissions.js";
 export interface EnsAdapter {
-  register: (mission: Mission) => Promise<string>;
+  register: (mission: Mission, rootOwner: string) => Promise<string>;
   revoke: (mission: Mission) => Promise<void>;
   readAuthorization: (name: string) => Promise<AgentAuthorization>;
 }
 export interface ApiConfig {
   db: Database;
   origin: string;
+  siweVerifier?: SiweVerifier;
+  jawPermissionVerifier?: JawPermissionVerifier;
   world?: ReturnType<typeof createWorldVerifier>;
   models?: {
     proposeMission: (input: unknown) => Promise<MissionProposal>;
@@ -78,6 +96,17 @@ function requireService<T>(service: T | undefined): T {
 }
 export function createApi(config: ApiConfig) {
   const { db } = config;
+  const webOrigin = new URL(config.origin);
+  if (
+    !["http:", "https:"].includes(webOrigin.protocol) ||
+    webOrigin.pathname !== "/" ||
+    webOrigin.search ||
+    webOrigin.hash ||
+    webOrigin.username ||
+    webOrigin.password
+  )
+    throw new Error("INVALID_WEB_ORIGIN");
+  const siweOrigin = webOrigin.origin;
   const app = new Hono<Env>();
   app.use("*", bodyLimit({ maxSize: 100000 }));
   app.use("*", async (c, next) => {
@@ -86,7 +115,7 @@ export function createApi(config: ApiConfig) {
     if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
       const origin = c.req.header("origin");
       if (
-        (origin && origin !== config.origin) ||
+        (origin && origin !== siweOrigin) ||
         c.req.header("sec-fetch-site") === "cross-site"
       )
         throw new HttpError(403, "FORBIDDEN");
@@ -100,6 +129,8 @@ export function createApi(config: ApiConfig) {
     message: string,
   ) => c.json({ error: { code, message } }, status);
   app.onError((e, c) => {
+    if (e instanceof PermissionError)
+      return error(c, e.status, e.code, e.message);
     if (e instanceof HttpError) return error(c, e.status, e.code, e.message);
     if (e instanceof v.ValiError || e instanceof SyntaxError)
       return error(c, 400, "INVALID_REQUEST", "Invalid request data.");
@@ -116,16 +147,37 @@ export function createApi(config: ApiConfig) {
     const s = await db.get<SessionRecord>("sessions", hashCanonical(token));
     return s && Date.parse(s.expiresAt) > Date.now() ? s : null;
   }
+  async function linkedSession(
+    c: Context,
+  ): Promise<SessionRecord & { rootId: string }> {
+    const s = await session(c);
+    if (
+      !s ||
+      !s.accountId ||
+      !(await db.get<WalletAccount>("accounts", s.accountId))
+    )
+      throw new HttpError(401, "UNAUTHENTICATED");
+    if (!s.rootId) throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+    const binding = await db.query<{ data: { rootId: string } }>(
+      "SELECT data FROM root_bindings WHERE account_id=$1",
+      [s.accountId],
+    );
+    if (
+      binding.rows[0]?.data.rootId !== s.rootId ||
+      !(await db.get<RootIdentity>("roots", s.rootId))
+    )
+      throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+    return s as SessionRecord & { rootId: string };
+  }
   const cookieOpts = {
     httpOnly: true,
     sameSite: "Strict" as const,
-    secure: config.origin.startsWith("https:"),
+    secure: webOrigin.protocol === "https:",
     path: "/",
   };
   async function owner(c: Context, id: string): Promise<Mission> {
     const m = await db.get<Mission>("missions", id);
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     if (!m || m.rootId !== s.rootId) throw new HttpError(404, "NOT_FOUND");
     return m;
   }
@@ -159,6 +211,17 @@ export function createApi(config: ApiConfig) {
       ),
       assessment: evaluation?.assessment ?? null,
       decision: evaluation?.decision ?? null,
+      permissionReviews: (
+        await db.list<JawPermissionReview>("jaw_reviews")
+      ).filter((review) => review.missionId === m.id),
+      permissionGrants: (await db.list<JawPermissionGrant>("jaw_permissions"))
+        .filter((grant) => grant.missionId === m.id)
+        .map((grant) =>
+          ["ACTIVE", "UNVERIFIED"].includes(grant.status) &&
+          grant.end * 1000 <= Date.now()
+            ? { ...grant, status: "EXPIRED" as const }
+            : grant,
+        ),
     };
   }
   async function audit(
@@ -184,8 +247,23 @@ export function createApi(config: ApiConfig) {
     } satisfies AuditEvent);
   }
   app.get("/api/health", (c) => c.json({ status: "ok" }));
+  const permissions = createPermissionService(db, config.jawPermissionVerifier);
+  app.get("/api/jaw/permissions", async (c) =>
+    c.json({ grants: await permissions.list(await linkedSession(c)) }),
+  );
+  app.post("/api/jaw/permissions/record", async (c) => {
+    const s = await linkedSession(c);
+    return c.json({ grant: await permissions.record(s, await c.req.json()) });
+  });
+  app.post("/api/jaw/permissions/:id/revoke", async (c) => {
+    const s = await linkedSession(c);
+    return c.json({
+      grant: await permissions.revoke(s, c.req.param("id"), await c.req.json()),
+    });
+  });
   app.get("/api/ready", (c) => {
     const services = [
+      ["JAW SIWE", !!config.siweVerifier],
       ["World ID", !!config.world],
       ["DeepSeek and Jev", !!config.models],
       ["ENSv2 Sepolia", !!config.ens],
@@ -204,7 +282,208 @@ export function createApi(config: ApiConfig) {
   app.get("/api/session", async (c) => {
     const s = await session(c);
     return c.json({
-      root: s ? await db.get<RootIdentity>("roots", s.rootId) : null,
+      root: s?.rootId ? await db.get<RootIdentity>("roots", s.rootId) : null,
+    });
+  });
+  app.post("/api/auth/siwe/nonce", async (c) => {
+    requireService(config.siweVerifier);
+    const now = new Date();
+    const nonce = randomBytes(16).toString("hex");
+    const token = randomBytes(32).toString("hex");
+    const challengeId = randomUUID();
+    const expiresAt = new Date(now.getTime() + 300000).toISOString();
+    await db.insert("challenges", {
+      id: challengeId,
+      kind: "siwe",
+      nonce,
+      ownerHash: hashCanonical(token),
+      createdAt: now.toISOString(),
+      expiresAt,
+      consumedAt: null,
+    });
+    setCookie(c, "humanos_auth_challenge", token, {
+      ...cookieOpts,
+      maxAge: 300,
+    });
+    return c.json({
+      challengeId,
+      nonce,
+      expiresAt,
+      chainId: 11155111,
+      domain: webOrigin.host,
+      uri: siweOrigin,
+    });
+  });
+  app.post("/api/auth/siwe/verify", async (c) => {
+    const verifier = requireService(config.siweVerifier);
+    const input = v.parse(VerifySiweRequestSchema, await c.req.json());
+    const challenge = await db.get<{
+      id: string;
+      kind: string;
+      nonce: string;
+      ownerHash: string;
+      createdAt: string;
+      expiresAt: string;
+      consumedAt: string | null;
+    }>("challenges", input.challengeId);
+    const token = getCookie(c, "humanos_auth_challenge");
+    const now = new Date();
+    if (
+      !token ||
+      !challenge ||
+      challenge.kind !== "siwe" ||
+      challenge.ownerHash !== hashCanonical(token) ||
+      challenge.consumedAt ||
+      Date.parse(challenge.expiresAt) <= now.getTime()
+    )
+      throw new HttpError(403, "INVALID_CHALLENGE");
+    const parsed = parseSiweMessage(input.message);
+    const issuedAt = parsed.issuedAt?.getTime();
+    const expiration = parsed.expirationTime?.getTime();
+    if (
+      !parsed.address ||
+      parsed.version !== "1" ||
+      !issuedAt ||
+      !expiration ||
+      !Number.isFinite(issuedAt) ||
+      !Number.isFinite(expiration) ||
+      issuedAt > now.getTime() ||
+      issuedAt < Date.parse(challenge.createdAt) - 60000 ||
+      expiration <= now.getTime() ||
+      expiration > Date.parse(challenge.expiresAt) ||
+      (parsed.notBefore &&
+        (!Number.isFinite(parsed.notBefore.getTime()) ||
+          parsed.notBefore.getTime() > now.getTime()))
+    )
+      throw new HttpError(403, "INVALID_SIWE_MESSAGE");
+    let verified: Awaited<ReturnType<SiweVerifier["verify"]>>;
+    try {
+      verified = await verifier.verify({
+        message: input.message,
+        signature: input.signature,
+      });
+    } catch (error) {
+      if (
+        isSiweVerificationError(error) &&
+        error.reason === "invalid_signature"
+      )
+        throw new HttpError(403, "INVALID_SIGNATURE");
+      throw new HttpError(
+        503,
+        "INTEGRATION_UNAVAILABLE",
+        "Account verification is temporarily unavailable.",
+      );
+    }
+    let address: string;
+    try {
+      address = normalizeWalletAddress(parsed.address);
+      if (
+        normalizeWalletAddress(verified.address) !== address ||
+        verified.chainId !== parsed.chainId
+      )
+        throw new Error("VERIFIER_MISMATCH");
+    } catch {
+      throw new HttpError(403, "INVALID_SIGNATURE");
+    }
+    const validContext =
+      parsed.domain === webOrigin.host &&
+      parsed.uri === siweOrigin &&
+      parsed.chainId === 11155111 &&
+      parsed.nonce === challenge.nonce &&
+      (!parsed.scheme || parsed.scheme === webOrigin.protocol.slice(0, -1));
+    const stillValid = (at: Date) =>
+      expiration > at.getTime() &&
+      (!parsed.notBefore || parsed.notBefore.getTime() <= at.getTime());
+    if (!stillValid(new Date()))
+      throw new HttpError(403, "INVALID_SIWE_MESSAGE");
+    if (!validContext) {
+      try {
+        await db.transaction((tx) =>
+          tx.consumeChallenge(challenge.id, new Date()),
+        );
+      } catch {
+        throw new HttpError(403, "INVALID_CHALLENGE");
+      }
+      throw new HttpError(403, "INVALID_SIWE_CONTEXT");
+    }
+    const accountId = `11155111:${address}`;
+    const sessionToken = randomBytes(32).toString("hex");
+    let account: WalletAccount;
+    let root: RootIdentity | null = null;
+    try {
+      await db.transaction(async (tx) => {
+        const issuedAt = new Date();
+        if (!stillValid(issuedAt))
+          throw new HttpError(403, "INVALID_SIWE_MESSAGE");
+        await tx.consumeChallenge(challenge.id, issuedAt);
+        const freshAccount: WalletAccount = {
+          id: accountId,
+          address,
+          chainId: 11155111,
+          createdAt: issuedAt.toISOString(),
+        };
+        await tx.query(
+          "INSERT INTO accounts (id,data) VALUES ($1,$2::jsonb) ON CONFLICT(id) DO NOTHING",
+          [accountId, JSON.stringify(freshAccount)],
+        );
+        const locked = await tx.query<{ data: WalletAccount }>(
+          "SELECT data FROM accounts WHERE id=$1 FOR UPDATE",
+          [accountId],
+        );
+        account = locked.rows[0]!.data;
+        const binding = await tx.query<{ data: { rootId: string } }>(
+          "SELECT data FROM root_bindings WHERE account_id=$1",
+          [accountId],
+        );
+        const rootId = binding.rows[0]?.data.rootId ?? null;
+        root = rootId ? await tx.get<RootIdentity>("roots", rootId) : null;
+        if (rootId && !root) throw new Error("ROOT_NOT_FOUND");
+        const sessionIssuedAt = new Date();
+        if (
+          !stillValid(sessionIssuedAt) ||
+          Date.parse(challenge.expiresAt) <= sessionIssuedAt.getTime()
+        )
+          throw new HttpError(403, "INVALID_SIWE_MESSAGE");
+        await tx.insert("sessions", {
+          id: hashCanonical(sessionToken),
+          accountId,
+          rootId,
+          expiresAt: new Date(
+            sessionIssuedAt.getTime() + 8 * 3600000,
+          ).toISOString(),
+        });
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "CHALLENGE_NOT_CONSUMABLE"
+      )
+        throw new HttpError(403, "INVALID_CHALLENGE");
+      throw error;
+    }
+    setCookie(c, "humanos_session", sessionToken, {
+      ...cookieOpts,
+      maxAge: 8 * 3600,
+    });
+    deleteCookie(c, "humanos_auth_challenge", { path: "/" });
+    return c.json({ account: account!, root, jawConfigured: true });
+  });
+  app.get("/api/auth/session", async (c) => {
+    const s = await session(c);
+    return c.json({
+      account: s ? await db.get<WalletAccount>("accounts", s.accountId) : null,
+      root: s?.rootId ? await db.get<RootIdentity>("roots", s.rootId) : null,
+      jawConfigured: !!config.siweVerifier,
+    });
+  });
+  app.post("/api/auth/logout", async (c) => {
+    const token = getCookie(c, "humanos_session");
+    if (token) await db.delete("sessions", hashCanonical(token));
+    deleteCookie(c, "humanos_session", { path: "/" });
+    return c.json({
+      account: null,
+      root: null,
+      jawConfigured: !!config.siweVerifier,
     });
   });
   app.post("/api/session/logout", async (c) => {
@@ -214,6 +493,13 @@ export function createApi(config: ApiConfig) {
     return c.json({ root: null });
   });
   app.post("/api/world/root/request", async (c) => {
+    const s = await session(c);
+    if (
+      !s ||
+      !s.accountId ||
+      !(await db.get<WalletAccount>("accounts", s.accountId))
+    )
+      throw new HttpError(401, "UNAUTHENTICATED");
     const world = requireService(config.world);
     const token = randomBytes(32).toString("hex");
     const request = world.createRequest("humanos-root", hashCanonical(token));
@@ -221,6 +507,8 @@ export function createApi(config: ApiConfig) {
       id: request.requestId,
       request,
       ownerHash: hashCanonical(token),
+      sessionId: s.id,
+      accountId: s.accountId,
       kind: "root",
       expiresAt: new Date(
         Number(request.rpContext.expires_at) * 1000,
@@ -231,75 +519,159 @@ export function createApi(config: ApiConfig) {
     return c.json(request);
   });
   app.post("/api/world/root/verify", async (c) => {
+    const s = await session(c);
+    if (
+      !s ||
+      !s.accountId ||
+      !(await db.get<WalletAccount>("accounts", s.accountId))
+    )
+      throw new HttpError(401, "UNAUTHENTICATED");
     const input = v.parse(VerifyWorldRequestSchema, await c.req.json());
     const challenge = await db.get<{
       id: string;
       request: WorldProofRequest;
       ownerHash: string;
       kind: string;
+      sessionId: string;
+      accountId: string;
+      expiresAt: string;
+      consumedAt: string | null;
     }>("challenges", input.requestId);
     const token = getCookie(c, "humanos_challenge");
     if (
       !token ||
       !challenge ||
       challenge.kind !== "root" ||
-      challenge.ownerHash !== hashCanonical(token)
+      challenge.ownerHash !== hashCanonical(token) ||
+      challenge.sessionId !== s.id ||
+      challenge.accountId !== s.accountId
     )
       throw new HttpError(403, "FORBIDDEN");
-    const verified = await requireService(config.world).verify(
-      challenge.request,
-      input.proof,
-    );
-    let root: RootIdentity = {
+    if (challenge.consumedAt || Date.parse(challenge.expiresAt) <= Date.now())
+      throw new HttpError(403, "INVALID_CHALLENGE");
+    let verified: Awaited<
+      ReturnType<NonNullable<ApiConfig["world"]>["verify"]>
+    >;
+    try {
+      verified = await requireService(config.world).verify(
+        challenge.request,
+        input.proof,
+      );
+    } catch (error) {
+      if (
+        error instanceof WorldVerificationError &&
+        error.reason === "invalid_proof"
+      )
+        throw new HttpError(403, "INVALID_PROOF");
+      throw error;
+    }
+    const nullifierHash = verified.nullifierHash.toLowerCase();
+    const freshRoot: RootIdentity = {
       id: randomUUID(),
       ensName: null,
       createdAt: new Date().toISOString(),
       verificationEnvironment: challenge.request.environment,
     };
-    const sessionToken = randomBytes(32).toString("hex");
-    await db.transaction(async (tx) => {
-      await tx.consumeChallenge(challenge.id, new Date());
-      const existing = await tx.get<{ id: string; rootId: string }>(
-        "nullifiers",
-        verified.nullifierHash,
-      );
-      if (existing) {
-        const known = await tx.get<RootIdentity>("roots", existing.rootId);
-        if (!known) throw new HttpError(409, "CONFLICT");
-        root = known;
-      } else {
-        await tx.insert("roots", root);
-        await tx.claimNullifier(verified.nullifierHash, root.id);
-      }
-      await tx.insert("sessions", {
-        id: hashCanonical(sessionToken),
-        rootId: root.id,
-        expiresAt: new Date(Date.now() + 8 * 3600000).toISOString(),
-        nullifier: verified.nullifier,
-      });
-    });
-    setCookie(c, "humanos_session", sessionToken, {
-      ...cookieOpts,
-      maxAge: 8 * 3600,
-    });
+    let root: RootIdentity;
+    let account: WalletAccount;
+    try {
+      ({ root, account } = await db.transaction(async (tx) => {
+        const lockedSession = await tx.query<{ data: SessionRecord }>(
+          "SELECT data FROM sessions WHERE id=$1 FOR UPDATE",
+          [s.id],
+        );
+        const currentSession = lockedSession.rows[0]?.data;
+        if (
+          !currentSession ||
+          currentSession.accountId !== s.accountId ||
+          Date.parse(currentSession.expiresAt) <= Date.now()
+        )
+          throw new HttpError(401, "UNAUTHENTICATED");
+        const lockedAccount = await tx.query<{ data: WalletAccount }>(
+          "SELECT data FROM accounts WHERE id=$1 FOR UPDATE",
+          [s.accountId],
+        );
+        const account = lockedAccount.rows[0]?.data;
+        if (!account) throw new HttpError(401, "UNAUTHENTICATED");
+        const lockedChallenge = await tx.query<{ data: typeof challenge }>(
+          "SELECT data FROM challenges WHERE id=$1 FOR UPDATE",
+          [challenge.id],
+        );
+        const currentChallenge = lockedChallenge.rows[0]?.data;
+        if (
+          !currentChallenge ||
+          currentChallenge.kind !== "root" ||
+          currentChallenge.sessionId !== s.id ||
+          currentChallenge.accountId !== s.accountId ||
+          currentChallenge.ownerHash !== hashCanonical(token) ||
+          currentChallenge.consumedAt ||
+          Date.parse(currentChallenge.expiresAt) <= Date.now() ||
+          hashCanonical(currentChallenge.request) !==
+            hashCanonical(challenge.request)
+        )
+          throw new HttpError(403, "INVALID_CHALLENGE");
+        await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+          `humanos:world:nullifier:${nullifierHash}`,
+        ]);
+        if (Date.parse(currentSession.expiresAt) <= Date.now())
+          throw new HttpError(401, "UNAUTHENTICATED");
+        if (Date.parse(currentChallenge.expiresAt) <= Date.now())
+          throw new HttpError(403, "INVALID_CHALLENGE");
+        const existing = await tx.get<{ id: string; rootId: string }>(
+          "nullifiers",
+          nullifierHash,
+        );
+        let root: RootIdentity;
+        if (existing) {
+          const known = await tx.get<RootIdentity>("roots", existing.rootId);
+          if (!known) throw new HttpError(409, "ROOT_ACCOUNT_CONFLICT");
+          root = known;
+        } else {
+          root = freshRoot;
+          await tx.insert("roots", root);
+          await tx.claimNullifier(nullifierHash, root.id);
+        }
+        if (currentSession.rootId && currentSession.rootId !== root.id)
+          throw new HttpError(409, "ROOT_ACCOUNT_CONFLICT");
+        await tx.bindRootAccount(root.id, s.accountId, new Date());
+        const linkedAt = new Date();
+        if (Date.parse(currentSession.expiresAt) <= linkedAt.getTime())
+          throw new HttpError(401, "UNAUTHENTICATED");
+        if (Date.parse(currentChallenge.expiresAt) <= linkedAt.getTime())
+          throw new HttpError(403, "INVALID_CHALLENGE");
+        await tx.consumeChallenge(challenge.id, linkedAt);
+        await tx.put("sessions", { ...currentSession, rootId: root.id });
+        return { root, account };
+      }));
+    } catch (error) {
+      if (error instanceof Error && error.message === "ROOT_ACCOUNT_CONFLICT")
+        throw new HttpError(409, "ROOT_ACCOUNT_CONFLICT");
+      if (
+        error instanceof Error &&
+        error.message === "CHALLENGE_NOT_CONSUMABLE"
+      )
+        throw new HttpError(403, "INVALID_CHALLENGE");
+      throw error;
+    }
     deleteCookie(c, "humanos_challenge", { path: "/" });
-    return c.json({ root });
+    return c.json({
+      account: account!,
+      root: root!,
+      jawConfigured: !!config.siweVerifier,
+    });
   });
   app.use("/api/missions/*", async (c, next) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     c.set("session", s);
     await next();
   });
   app.use("/api/actions/*", async (c, next) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     c.set("session", s);
     await next();
   });
   app.get("/api/missions", async (c) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     return c.json({
       missions: (await db.list<Mission>("missions")).filter(
         (m) => m.rootId === s.rootId,
@@ -307,8 +679,7 @@ export function createApi(config: ApiConfig) {
     });
   });
   app.post("/api/missions", async (c) => {
-    const s = await session(c);
-    if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    const s = await linkedSession(c);
     const input = v.parse(CreateMissionRequestSchema, await c.req.json());
     const proposed = await requireService(config.models).proposeMission(input);
     const expiresAt = input.expiresAt ?? proposed.expiresAt;
@@ -370,6 +741,7 @@ export function createApi(config: ApiConfig) {
   });
   app.post("/api/missions/:id/authorize", async (c) => {
     const m = await owner(c, c.req.param("id"));
+    const s = await linkedSession(c);
     const input = v.parse(AuthorizeMissionRequestSchema, await c.req.json());
     const next = await db.transaction(async (tx) => {
       const fresh = await tx.lockMission(m.id);
@@ -379,6 +751,42 @@ export function createApi(config: ApiConfig) {
         input.approvedCapabilities.some((x) => !fresh.capabilities.includes(x))
       )
         throw new HttpError(409, "CONFLICT");
+      const liveSession = await tx.query<{ data: SessionRecord }>(
+        "SELECT data FROM sessions WHERE id=$1 FOR UPDATE",
+        [s.id],
+      );
+      const currentSession = liveSession.rows[0]?.data;
+      if (
+        !currentSession ||
+        currentSession.accountId !== s.accountId ||
+        currentSession.rootId !== fresh.rootId ||
+        Date.parse(currentSession.expiresAt) <= Date.now()
+      )
+        throw new HttpError(401, "UNAUTHENTICATED");
+      const accountRow = await tx.query<{ data: WalletAccount }>(
+        "SELECT data FROM accounts WHERE id=$1 FOR UPDATE",
+        [s.accountId],
+      );
+      const account = accountRow.rows[0]?.data;
+      const binding = await tx.query<{
+        data: { rootId: string; accountId: string };
+      }>("SELECT data FROM root_bindings WHERE account_id=$1", [s.accountId]);
+      let rootOwner: string;
+      try {
+        rootOwner = normalizeWalletAddress(account?.address ?? "");
+      } catch {
+        throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+      }
+      if (
+        !account ||
+        account.chainId !== 11155111 ||
+        account.address !== rootOwner ||
+        account.id !== `${account.chainId}:${rootOwner}` ||
+        /^0x0{40}$/.test(rootOwner) ||
+        binding.rows[0]?.data.accountId !== account.id ||
+        binding.rows[0]?.data.rootId !== fresh.rootId
+      )
+        throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
       const approved = {
         ...fresh,
         approvedCapabilities: [...input.approvedCapabilities],
@@ -389,7 +797,15 @@ export function createApi(config: ApiConfig) {
       Object.freeze(registration.approvedCapabilities);
       Object.freeze(registration.steps);
       Object.freeze(registration);
-      const agentEns = await requireService(config.ens).register(registration);
+      // Account-row contention can outlast the earlier checks while this transaction waits.
+      if (Date.parse(currentSession.expiresAt) <= Date.now())
+        throw new HttpError(401, "UNAUTHENTICATED");
+      if (Date.parse(fresh.expiresAt) <= Date.now())
+        throw new HttpError(409, "CONFLICT");
+      const agentEns = await requireService(config.ens).register(
+        registration,
+        rootOwner,
+      );
       const value = {
         ...approved,
         agentEns,
@@ -624,7 +1040,6 @@ export function createApi(config: ApiConfig) {
       verified = await requireService(config.world).verify(
         challenge.request,
         input.proof,
-        String(s.nullifier),
       );
     } catch (error) {
       // A denied attempt is not a terminal human cancellation. Never store proof bytes or provider errors.
@@ -643,16 +1058,61 @@ export function createApi(config: ApiConfig) {
             tx,
           );
       });
+      if (
+        error instanceof WorldVerificationError &&
+        error.reason === "invalid_proof"
+      )
+        throw new HttpError(403, "INVALID_PROOF");
       throw error;
     }
     const next = await db.withLockedAction(a.id, async (tx) => {
+      const live = await tx.query<{ data: SessionRecord }>(
+        "SELECT data FROM sessions WHERE id=$1 FOR UPDATE",
+        [s.id],
+      );
+      const currentSession = live.rows[0]?.data;
+      if (
+        !currentSession ||
+        currentSession.accountId !== s.accountId ||
+        currentSession.rootId !== s.rootId ||
+        Date.parse(currentSession.expiresAt) <= Date.now()
+      )
+        throw new HttpError(401, "UNAUTHENTICATED");
+      const binding = await tx.query<{ data: { rootId: string } }>(
+        "SELECT data FROM root_bindings WHERE account_id=$1",
+        [s.accountId],
+      );
+      if (binding.rows[0]?.data.rootId !== s.rootId)
+        throw new HttpError(403, "HUMAN_VERIFICATION_REQUIRED");
+      const m = await tx.get<Mission>("missions", a.missionId);
+      const currentChallenge = await tx.get<typeof challenge>(
+        "challenges",
+        challenge.id,
+      );
+      if (
+        !m ||
+        !currentChallenge ||
+        currentChallenge.kind !== "approval" ||
+        currentChallenge.sessionId !== s.id ||
+        currentChallenge.actionId !== a.id ||
+        currentChallenge.rootId !== s.rootId ||
+        hashCanonical(currentChallenge.request) !==
+          hashCanonical(challenge.request) ||
+        m.rootId !== s.rootId ||
+        a.rootId !== s.rootId
+      )
+        throw new HttpError(403, "FORBIDDEN");
+      const nullifier = await tx.get<{ rootId: string }>(
+        "nullifiers",
+        verified.nullifierHash.toLowerCase(),
+      );
+      if (!nullifier || nullifier.rootId !== s.rootId)
+        throw new HttpError(403, "FORBIDDEN");
       await tx.consumeChallenge(challenge.id, new Date());
       await tx.updateApprovalStatus(challenge.approvalId, "VERIFIED", {
         verifiedAt: new Date().toISOString(),
         nullifierHash: verified.nullifierHash,
       });
-      const m = await tx.get<Mission>("missions", a.missionId);
-      if (!m) throw new HttpError(404, "NOT_FOUND");
       const next = {
         ...m,
         state: transition(m.state, "APPROVE"),
@@ -735,6 +1195,9 @@ export function createApi(config: ApiConfig) {
   app.post("/api/actions/:id/execute", async (c) => {
     const a = await ownedAction(c);
     const executor = createExecutor({
+      ...(config.jawPermissionVerifier
+        ? { jawPermissionVerifier: config.jawPermissionVerifier }
+        : {}),
       db,
       readAuthorization: requireService(config.ens).readAuthorization,
       evaluate: requireService(config.models).evaluate,

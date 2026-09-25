@@ -4,6 +4,10 @@ import {
   TimestampSchema,
   JsonValueSchema,
   RootIdentitySchema,
+  WalletAccountSchema,
+  RootAccountBindingSchema,
+  JawPermissionGrantSchema,
+  JawPermissionReviewSchema,
   MissionSchema,
   ActionProposalSchema,
   ApprovalSchema,
@@ -13,6 +17,10 @@ import {
 } from "@humanos/schemas";
 export const TABLES = [
   "roots",
+  "accounts",
+  "root_bindings",
+  "jaw_permissions",
+  "jaw_reviews",
   "nullifiers",
   "sessions",
   "missions",
@@ -29,7 +37,12 @@ export function tableName(table: Table): string {
   return '"' + table + '"';
 }
 export const SessionRecordSchema = v.objectWithRest(
-  { id: IdSchema, rootId: IdSchema, expiresAt: TimestampSchema },
+  {
+    id: IdSchema,
+    accountId: IdSchema,
+    rootId: v.nullable(IdSchema),
+    expiresAt: TimestampSchema,
+  },
   JsonValueSchema,
 );
 export type SessionRecord = v.InferOutput<typeof SessionRecordSchema>;
@@ -46,6 +59,10 @@ const schemas: Partial<Record<Table, v.GenericSchema>> = {
   sessions: SessionRecordSchema,
   challenges: ChallengeRecordSchema,
   roots: RootIdentitySchema,
+  accounts: WalletAccountSchema,
+  root_bindings: RootAccountBindingSchema,
+  jaw_permissions: JawPermissionGrantSchema,
+  jaw_reviews: JawPermissionReviewSchema,
   missions: MissionSchema,
   actions: ActionProposalSchema,
   approvals: ApprovalSchema,

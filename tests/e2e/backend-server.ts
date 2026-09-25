@@ -152,7 +152,7 @@ export async function startBackendHarness() {
       },
     },
   };
-  const app = createApi(config);
+  let app: ReturnType<typeof createApi> | null = null;
   const assets = resolve("apps/web/dist");
   const server = createServer(async (req, res) => {
     try {
@@ -160,7 +160,7 @@ export async function startBackendHarness() {
       let response: Response;
       if (url.pathname.startsWith("/agents/humanos/")) {
         const id = url.pathname.split("/").at(-1)!;
-        response = await app.request(`/api/internal/missions/${id}/prepare`, {
+        response = await app!.request(`/api/internal/missions/${id}/prepare`, {
           method: "POST",
           headers: { authorization: "Bearer e2e-internal-only" },
         });
@@ -168,7 +168,7 @@ export async function startBackendHarness() {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(Buffer.from(chunk));
         const body = Buffer.concat(chunks);
-        response = await app.fetch(
+        response = await app!.fetch(
           new Request(url, {
             method: req.method ?? "GET",
             headers: req.headers as Record<string, string>,
@@ -208,6 +208,8 @@ export async function startBackendHarness() {
   if (!address || typeof address === "string") throw new Error("NO_ADDRESS");
   config.origin = `http://127.0.0.1:${address.port}`;
   config.flueUrl = config.origin;
+  app = createApi(config);
+  const nullifiers = new Map<string, string>();
   return {
     url: config.origin,
     db,
@@ -217,17 +219,44 @@ export async function startBackendHarness() {
     async seed() {
       const rootId = randomUUID(),
         token = randomBytes(32).toString("hex");
+      const now = new Date().toISOString();
+      const address = `0x${randomBytes(20).toString("hex")}`;
+      const accountId = `11155111:${address}`;
+      const nullifier = BigInt(
+        `0x${randomBytes(16).toString("hex")}`,
+      ).toString();
+      nullifiers.set(rootId, nullifier);
+      await db.insert("accounts", {
+        id: accountId,
+        address,
+        chainId: 11155111,
+        createdAt: now,
+      });
       await db.insert("roots", {
         id: rootId,
         ensName: "test-human.fixture.eth",
-        createdAt: new Date().toISOString(),
+        createdAt: now,
         verificationEnvironment: "staging",
+      });
+      await db.insert("root_bindings", {
+        id: hashCanonical({ rootId, accountId }),
+        rootId,
+        accountId,
+        createdAt: now,
+      });
+      await db.insert("nullifiers", {
+        id: hashCanonical({
+          rpId: "rp_fixture",
+          environment: "staging",
+          nullifier,
+        }),
+        rootId,
       });
       await db.insert("sessions", {
         id: hashCanonical(token),
+        accountId,
         rootId,
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
-        nullifier: "1",
       });
       return token;
     },
@@ -238,6 +267,12 @@ export async function startBackendHarness() {
       }>("challenges", requestId);
       if (!challenge) throw new Error("NO_CHALLENGE");
       const q = challenge.request;
+      const session = await db.get<{ rootId: string | null }>(
+        "sessions",
+        (challenge as { sessionId: string }).sessionId,
+      );
+      const nullifier = session?.rootId ? nullifiers.get(session.rootId) : null;
+      if (!nullifier) throw new Error("NO_FIXTURE_NULLIFIER");
       return {
         protocol_version: "4.0",
         action: q.action,
@@ -249,7 +284,7 @@ export async function startBackendHarness() {
             issuer_schema_id: 1,
             proof: ["0x1", "0x2", "0x3", "0x4", "0x5"],
             signal_hash: hashSignal(q.signal),
-            nullifier: "0x1",
+            nullifier: `0x${BigInt(nullifier).toString(16)}`,
             expires_at_min: Math.ceil(Date.now() / 60000) + 5,
           },
         ],

@@ -10,7 +10,7 @@ export default defineConfig({
     : {}),
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: "http://127.0.0.1:5183",
     trace: "retain-on-failure",
     video: process.env.HUMANOS_RECORD === "1" ? "on" : "off",
   },
@@ -22,8 +22,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm --filter @humanos/web dev",
-    url: "http://127.0.0.1:5173",
-    reuseExistingServer: true,
+    command:
+      "pnpm --filter @humanos/web exec vite --mode e2e --host 127.0.0.1 --port 5183 --strictPort",
+    url: "http://127.0.0.1:5183",
+    reuseExistingServer: false,
   },
 });

@@ -9,6 +9,9 @@ import {
   type Approval,
   type AgentAuthorization,
   type JevAssessment,
+  jawGrantHash,
+  type JawPermissionGrant,
+  type JawPermissionReview,
 } from "@humanos/schemas";
 import { approvalBinding } from "@humanos/world";
 import { JEV_MODEL, JEV_QUESTION_VERSION } from "@humanos/models";
@@ -21,10 +24,17 @@ const db = new Database(
 beforeAll(() => db.migrate());
 afterAll(() => db.close());
 async function setup(
-  type: "SUBMIT_APPLICATION" | "CREATE_CALENDAR_EVENT" = "SUBMIT_APPLICATION",
+  type:
+    | "SUBMIT_APPLICATION"
+    | "CREATE_CALENDAR_EVENT"
+    | "TRANSFER_VALUE" = "SUBMIT_APPLICATION",
 ) {
   const capability =
-    type === "SUBMIT_APPLICATION" ? "application.submit" : "calendar.create";
+    type === "TRANSFER_VALUE"
+      ? "value.transfer"
+      : type === "SUBMIT_APPLICATION"
+        ? "application.submit"
+        : "calendar.create";
   const kind = type === "SUBMIT_APPLICATION" ? "application" : "calendar";
   const now = Date.now(),
     stamp = new Date(now).toISOString(),
@@ -208,6 +218,115 @@ describe("atomic execution on real PostgreSQL with fixture provider transports",
     await expect(execute(s.action.id)).rejects.toThrow();
     expect(s.calls).toBe(0);
   });
+});
+it("loads independent JAW evidence under the execution lock but never enables an unimplemented transfer", async () => {
+  const s = await setup("TRANSFER_VALUE");
+  const account = "0x3333333333333333333333333333333333333333";
+  const accountId = `11155111:${account}`;
+  await db.insert("accounts", {
+    id: accountId,
+    address: account,
+    chainId: 11155111,
+    createdAt: s.mission.createdAt,
+  });
+  await db.transaction((tx) =>
+    tx.bindRootAccount(s.mission.rootId, accountId, new Date()),
+  );
+  const end = Math.floor(Date.parse(s.mission.expiresAt) / 1000);
+  const review: JawPermissionReview = {
+    id: randomUUID(),
+    missionId: s.mission.id,
+    accountId,
+    account,
+    chainId: 11155111,
+    spender: "0x2222222222222222222222222222222222222222",
+    calls: [{ target: account, selector: "0xa9059cbb" }],
+    spends: [{ token: account, allowance: "100", unit: "day", multiplier: 1 }],
+    start: Math.floor(Date.now() / 1000),
+    end,
+    expiresAt: new Date(end * 1000).toISOString(),
+    createdAt: s.mission.createdAt,
+  };
+  await db.insert("jaw_reviews", review);
+  const id = hashCanonical(randomUUID());
+  const grant: JawPermissionGrant = {
+    ...review,
+    id,
+    reviewId: review.id,
+    permissionId: id,
+    salt: "0x1",
+    status: "ACTIVE",
+    revokedAt: null,
+  };
+  await db.insert("jaw_permissions", grant);
+  const payload = {
+    permissionId: id,
+    accountId,
+    account,
+    chainId: 11155111,
+    spender: review.spender,
+    target: account,
+    selector: "0xa9059cbb",
+    value: "0",
+    tokenSpend: { token: account, amount: "10" },
+  };
+  const action = { ...s.action, payload, payloadHash: hashCanonical(payload) };
+  await db.put("actions", action);
+  // Fresh fixture approval bound to the exact transfer, not the old payload.
+  const binding = approvalBinding(action);
+  await db.query("DELETE FROM approvals WHERE id=$1", [s.approval.id]);
+  await db.insert("approvals", {
+    ...s.approval,
+    binding,
+    bindingHash: hashCanonical(binding),
+  });
+  let reads = 0;
+  const verifier = {
+    verify: async (g: JawPermissionGrant) => {
+      reads++;
+      return {
+        permissionId: g.id,
+        constraintsHash: jawGrantHash(g),
+        state: "ACTIVE" as const,
+        checkedAt: new Date().toISOString(),
+        spent: { [account]: "0" },
+      };
+    },
+  };
+  const dependencies = {
+    db,
+    readAuthorization: s.auth,
+    evaluate: s.evaluate,
+    effect: s.effect,
+  };
+  await expect(createExecutor(dependencies)(action.id)).rejects.toThrow(
+    "JAW_PERMISSION_UNVERIFIED",
+  );
+  await expect(
+    createExecutor({ ...dependencies, jawPermissionVerifier: verifier })(
+      action.id,
+    ),
+  ).rejects.toThrow("UNSUPPORTED_EXECUTOR");
+  expect(reads).toBe(1);
+  expect(s.calls).toBe(0);
+  for (const status of [
+    "UNVERIFIED",
+    "REVOKED",
+    "RECONCILIATION_REQUIRED",
+    "EXPIRED",
+  ] as const) {
+    await db.put("jaw_permissions", {
+      ...grant,
+      status,
+      revokedAt: status === "REVOKED" ? new Date().toISOString() : null,
+    });
+    await expect(
+      createExecutor({ ...dependencies, jawPermissionVerifier: verifier })(
+        action.id,
+      ),
+    ).rejects.toThrow("JAW_PERMISSION_UNVERIFIED");
+  }
+  expect(s.calls).toBe(0);
 });
 it("reconciliation advances mission and appends audit", async () => {
   const s = await setup();

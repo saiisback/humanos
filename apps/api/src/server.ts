@@ -10,6 +10,7 @@ import {
   initializeEnsTransactionJournal,
 } from "@humanos/ens";
 import { createEnsReceiptPublisher } from "./ens-receipts.js";
+import { createSepoliaSiweVerifier } from "./services/siwe.js";
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL required");
 const db = new Database(databaseUrl);
@@ -18,6 +19,8 @@ const config: ApiConfig = {
   db,
   origin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
 };
+if (process.env.SEPOLIA_RPC_URL)
+  config.siweVerifier = createSepoliaSiweVerifier(process.env.SEPOLIA_RPC_URL);
 if (
   process.env.WORLD_APP_ID &&
   process.env.WORLD_RP_ID &&

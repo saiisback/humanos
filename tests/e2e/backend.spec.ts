@@ -75,8 +75,10 @@ test("REAL API + PostgreSQL, provider fixtures: submit, calendar, receipt and re
   await page.getByRole("button", { name: "Execute approved action" }).click();
   await expect(page.getByText("Execution receipt · succeeded")).toHaveCount(2);
   await expect(
-    page.locator(".mission-detail > .section-title .badge"),
-  ).toHaveText("completed");
+    page
+      .getByRole("region", { name: "Agent mandate" })
+      .getByText("completed", { exact: true }),
+  ).toBeVisible();
 });
 test("REAL API + PostgreSQL, provider fixtures: cancellation blocks execution", async ({
   page,
@@ -84,7 +86,11 @@ test("REAL API + PostgreSQL, provider fixtures: cancellation blocks execution", 
   const id = await prepare(page);
   const action = (await backend.actions(id))[0]!;
   await page.getByRole("button", { name: "Cancel action" }).click();
-  await expect(page.getByRole("status")).toContainText("rejected");
+  await expect(
+    page
+      .getByRole("region", { name: "Agent mandate" })
+      .getByText("rejected", { exact: true }),
+  ).toBeVisible();
   const denied = await page.request.post(
     `${backend.url}/api/actions/${action.id}/execute`,
     { data: {} },
@@ -98,7 +104,11 @@ test("REAL API + PostgreSQL, provider fixtures: revoked verified approval cannot
   const id = await prepare(page);
   const action = await verifyFixture(page, id);
   await page.getByRole("button", { name: "Revoke authority" }).click();
-  await expect(page.getByRole("status")).toContainText("revoked");
+  await expect(
+    page
+      .getByRole("region", { name: "Agent mandate" })
+      .getByText("revoked", { exact: true }),
+  ).toBeVisible();
   const denied = await page.request.post(
     `${backend.url}/api/actions/${action.id}/execute`,
     { data: {} },
@@ -113,7 +123,11 @@ test("REAL API + PostgreSQL, provider fixtures: expiry survives refresh", async 
   const action = await verifyFixture(page, id);
   await backend.expire(id);
   await page.reload();
-  await expect(page.getByRole("status")).toContainText("expired");
+  await expect(
+    page
+      .getByRole("region", { name: "Agent mandate" })
+      .getByText("expired", { exact: true }),
+  ).toBeVisible();
   const denied = await page.request.post(
     `${backend.url}/api/actions/${action.id}/execute`,
     { data: {} },
@@ -128,10 +142,9 @@ test("REAL API + PostgreSQL, provider fixtures: reload preserves reviewed action
   const action = (await backend.actions(id))[0]!;
   await page.reload();
   await expect(
-    page.getByRole("heading", {
-      name: "Backend-connected Tokyo mission",
-      exact: true,
-    }),
+    page
+      .getByRole("list", { name: "Mission conversation" })
+      .getByText("Backend-connected Tokyo mission", { exact: true }),
   ).toBeVisible();
   await page.getByText("Inspect exact action & binding").click();
   await expect(
@@ -154,13 +167,22 @@ for (const revoke of [false, true]) {
     expect(backend.effects.get(action.id)).toBe(1);
     if (revoke) {
       await page.getByRole("button", { name: "Revoke authority" }).click();
-      await expect(page.getByRole("status")).toContainText("revoked");
+      await expect(
+        page
+          .getByRole("region", { name: "Agent mandate" })
+          .getByText("revoked", { exact: true }),
+      ).toBeVisible();
     }
     await page.getByRole("button", { name: "Check submission status" }).click();
     await expect(page.getByText("Execution receipt · succeeded")).toBeVisible();
     expect(backend.effects.get(action.id)).toBe(1);
     expect(backend.reconciliations.get(action.id)).toBe(1);
-    if (revoke) await expect(page.getByRole("status")).toContainText("revoked");
+    if (revoke)
+      await expect(
+        page
+          .getByRole("region", { name: "Agent mandate" })
+          .getByText("revoked", { exact: true }),
+      ).toBeVisible();
   });
 }
 
@@ -202,7 +224,9 @@ test("REAL API + PostgreSQL, provider fixtures: pending verification retries an 
   );
   expect(verify.ok(), await verify.text()).toBeTruthy();
   await page.reload();
-  await expect(page.locator(".action-review .badge")).toHaveText("verified");
+  await expect(
+    page.getByRole("region", { name: `Action review ${action.id}` }),
+  ).toContainText("verified");
 });
 
 test("REAL API + PostgreSQL, provider fixtures: cancellation after verified approval rejects without effect", async ({
@@ -210,10 +234,18 @@ test("REAL API + PostgreSQL, provider fixtures: cancellation after verified appr
 }) => {
   const id = await prepare(page);
   const action = await verifyFixture(page, id);
-  await expect(page.locator(".action-review .badge")).toHaveText("verified");
+  await expect(
+    page.getByRole("region", { name: `Action review ${action.id}` }),
+  ).toContainText("verified");
   await page.getByRole("button", { name: "Cancel action" }).click();
-  await expect(page.getByRole("status")).toContainText("rejected");
-  await expect(page.locator(".action-review .badge")).toHaveText("cancelled");
+  await expect(
+    page
+      .getByRole("region", { name: "Agent mandate" })
+      .getByText("rejected", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Action cancelled" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Execute approved action" }),
   ).toHaveCount(0);

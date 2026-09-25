@@ -4,6 +4,7 @@ import {
   approvalBinding,
   verifyApprovalBinding,
   normalizeNullifier,
+  WorldVerificationError,
 } from "../src/index.js";
 import { hashCanonical, type ActionProposal } from "@humanos/schemas";
 const now = Date.parse("2026-09-24T00:00:00Z");
@@ -116,6 +117,38 @@ describe("official World verification boundary", () => {
     });
     await expect(v.verify(request, await sample())).rejects.toThrow();
   });
+  it("classifies provider outage separately from an invalid proof", async () => {
+    const p = await sample();
+    const invalid = createWorldVerifier({
+      ...config,
+      fetch: async () => Response.json({ ...success, success: false }),
+    });
+    const unavailable = createWorldVerifier({
+      ...config,
+      fetch: async () => {
+        throw new Error("network down");
+      },
+    });
+    await expect(invalid.verify(request, p)).rejects.toMatchObject({
+      reason: "invalid_proof",
+    });
+    await expect(unavailable.verify(request, p)).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    expect(new WorldVerificationError().reason).toBe("invalid_proof");
+  });
+  it.each([429, 502, 503, 504])(
+    "treats upstream HTTP %i as unavailable",
+    async (status) => {
+      const verifier = createWorldVerifier({
+        ...config,
+        fetch: async () => new Response(null, { status }),
+      });
+      await expect(
+        verifier.verify(request, await sample()),
+      ).rejects.toMatchObject({ reason: "unavailable" });
+    },
+  );
   it("rejects wrong signal, expired challenge, legacy and wrong human", async () => {
     const v = createWorldVerifier({
       ...config,

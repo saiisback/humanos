@@ -3,6 +3,23 @@ export const IdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 export const HexSchema = v.pipe(v.string(), v.regex(/^0x[0-9a-f]{64}$/));
 export type Hex = `0x${string}`;
 export const TimestampSchema = v.pipe(v.string(), v.isoTimestamp());
+export function normalizeWalletAddress(address: string): string {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address))
+    throw new Error("INVALID_WALLET_ADDRESS");
+  return address.toLowerCase();
+}
+export const WalletAddressSchema = v.pipe(
+  v.string(),
+  v.regex(/^0x[0-9a-fA-F]{40}$/),
+  v.check((address) => {
+    try {
+      return address === normalizeWalletAddress(address);
+    } catch {
+      return false;
+    }
+  }),
+);
+export const ChainIdSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
 export const CapabilitySchema = v.picklist([
   "documents.read",
   "documents.disclose",
@@ -82,6 +99,134 @@ export const RootIdentitySchema = v.strictObject({
   verificationEnvironment: v.picklist(["staging", "production"]),
 });
 export type RootIdentity = v.InferOutput<typeof RootIdentitySchema>;
+export const WalletAccountSchema = v.pipe(
+  v.strictObject({
+    id: IdSchema,
+    address: WalletAddressSchema,
+    chainId: ChainIdSchema,
+    createdAt: TimestampSchema,
+  }),
+  v.check(({ id, address, chainId }) => id === `${chainId}:${address}`),
+);
+export type WalletAccount = v.InferOutput<typeof WalletAccountSchema>;
+export const RootAccountBindingSchema = v.strictObject({
+  id: IdSchema,
+  rootId: IdSchema,
+  accountId: IdSchema,
+  createdAt: TimestampSchema,
+});
+export type RootAccountBinding = v.InferOutput<typeof RootAccountBindingSchema>;
+export const Uint160DecimalSchema = v.pipe(
+  v.string(),
+  v.maxLength(49),
+  v.regex(/^(0|[1-9][0-9]*)$/),
+  v.check((value) => BigInt(value) < 2n ** 160n),
+);
+export const Uint48Schema = v.pipe(
+  v.number(),
+  v.integer(),
+  v.minValue(0),
+  v.maxValue(2 ** 48 - 1),
+);
+const ExactAddressSchema = v.pipe(
+  WalletAddressSchema,
+  v.check(
+    (value) =>
+      value !== "0x0000000000000000000000000000000000000000" &&
+      value !== "0x3232323232323232323232323232323232323232",
+  ),
+);
+export const JawCallSchema = v.strictObject({
+  target: ExactAddressSchema,
+  selector: v.pipe(
+    v.string(),
+    v.regex(/^0x[0-9a-f]{8}$/),
+    v.check((value) => value !== "0x32323232"),
+  ),
+});
+export const JawSpendSchema = v.strictObject({
+  token: ExactAddressSchema,
+  allowance: Uint160DecimalSchema,
+  unit: v.picklist(["minute", "hour", "day", "week", "month", "forever"]),
+  multiplier: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65535)),
+});
+const jawConstraintEntries = {
+  missionId: IdSchema,
+  accountId: IdSchema,
+  account: ExactAddressSchema,
+  chainId: v.literal(11155111),
+  spender: ExactAddressSchema,
+  calls: v.pipe(
+    v.array(JawCallSchema),
+    v.minLength(1),
+    v.maxLength(32),
+    v.check(
+      (calls) =>
+        new Set(calls.map((call) => `${call.target}:${call.selector}`)).size ===
+        calls.length,
+    ),
+  ),
+  spends: v.pipe(
+    v.array(JawSpendSchema),
+    v.maxLength(32),
+    v.check(
+      (spends) =>
+        new Set(spends.map((spend) => spend.token)).size === spends.length,
+    ),
+  ),
+  start: Uint48Schema,
+  end: Uint48Schema,
+  expiresAt: TimestampSchema,
+  createdAt: TimestampSchema,
+};
+function validJawContext(value: {
+  accountId: string;
+  account: string;
+  chainId: number;
+  start: number;
+  end: number;
+  expiresAt: string;
+}) {
+  return (
+    value.accountId === `${value.chainId}:${value.account}` &&
+    value.start < value.end &&
+    Date.parse(value.expiresAt) === value.end * 1000
+  );
+}
+// The SDK selects start/salt itself. Review.start is the earliest permitted SDK start.
+export const JawPermissionReviewSchema = v.pipe(
+  v.strictObject({ id: IdSchema, ...jawConstraintEntries }),
+  v.check((value) => validJawContext(value)),
+);
+export type JawPermissionReview = v.InferOutput<
+  typeof JawPermissionReviewSchema
+>;
+export const JawPermissionGrantSchema = v.pipe(
+  v.strictObject({
+    ...jawConstraintEntries,
+    id: HexSchema,
+    reviewId: IdSchema,
+    permissionId: HexSchema,
+    salt: v.pipe(v.string(), v.regex(/^0x[0-9a-f]{1,64}$/)),
+    status: v.picklist([
+      "UNVERIFIED",
+      "ACTIVE",
+      "REVOKED",
+      "EXPIRED",
+      "RECONCILIATION_REQUIRED",
+    ]),
+    revokedAt: v.nullable(TimestampSchema),
+  }),
+  v.check((value) => validJawContext(value)),
+  v.check(
+    (value) =>
+      value.id === value.permissionId &&
+      (value.status === "REVOKED"
+        ? value.revokedAt !== null
+        : value.revokedAt === null),
+  ),
+);
+export type JawPermissionGrant = v.InferOutput<typeof JawPermissionGrantSchema>;
 export const MissionProposalSchema = v.strictObject({
   goal: v.pipe(v.string(), v.minLength(1), v.maxLength(10000)),
   title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),

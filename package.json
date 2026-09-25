@@ -12,7 +12,7 @@
     "dev": "node scripts/dev.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "node scripts/test.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "pnpm --filter @humanos/web build && playwright test",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -34,7 +34,9 @@
     "overrides": {
       "hono": "4.13.8",
       "@hono/node-server": "1.19.15",
-      "valibot": "1.5.0"
+      "valibot": "1.5.0",
+      "axios": "1.20.0",
+      "qs": "6.16.0"
     }
   }
 }

@@ -27,14 +27,14 @@ This slice does not include a native Expo application, production deployment, in
 
 Each system answers a different question:
 
-| System | Question it answers |
-| --- | --- |
-| JAW | Which passkey-controlled smart account is operating this HumanOS account? |
-| World PoH | Is this account being linked to a unique human eligible for a single HumanOS root? |
-| ENSv2 | Which agent identity exists, what authority is published for it, and is that authority still active? |
-| JAW permissions | Which onchain calls, spend limits and time window may a delegated signer use? |
-| HumanOS policy | Is this exact proposed action allowed by the mission, human grant, ENS state, risk assessment and fresh approval? |
-| DeepSeek/Jev | What action is proposed, and what advisory risk/alignment assessment applies? |
+| System          | Question it answers                                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| JAW             | Which passkey-controlled smart account is operating this HumanOS account?                                         |
+| World PoH       | Is this account being linked to a unique human eligible for a single HumanOS root?                                |
+| ENSv2           | Which agent identity exists, what authority is published for it, and is that authority still active?              |
+| JAW permissions | Which onchain calls, spend limits and time window may a delegated signer use?                                     |
+| HumanOS policy  | Is this exact proposed action allowed by the mission, human grant, ENS state, risk assessment and fresh approval? |
+| DeepSeek/Jev    | What action is proposed, and what advisory risk/alignment assessment applies?                                     |
 
 No client callback, model response, wallet address, ENS record or JAW permission is sufficient by itself to authorize a protected side effect.
 
@@ -184,7 +184,7 @@ Persistence adds records for SIWE challenges, wallet accounts, root-account bind
 
 ## Model provider configuration
 
-DeepSeek Flash and Jev stay behind their existing model interfaces. The implementation accepts only documented provider configuration. If the supplied "OpenCode API key" is a gateway credential, its endpoint, authentication format, model identifiers and response compatibility must be documented before adding an adapter. The key must be placed in local or deployment secret storage, never in chat, source control, Vite public variables or test snapshots.
+DeepSeek Flash and Jev stay behind their existing model interfaces and run through the existing Flue agent framework. The implementation accepts only the documented backend provider configuration. Keys must be placed in local or deployment secret storage, never in chat, source control, Vite public variables or test snapshots.
 
 The UI displays provider readiness independently. Missing Jev fails closed for protected execution; missing DeepSeek prevents live proposal generation but does not fabricate a live result.
 
@@ -248,4 +248,3 @@ Live evidence remains separate from fixture evidence. Trial runs with real JAW, 
 - Model output cannot expand JAW, ENS or HumanOS authority.
 - Missing live integrations are shown as unavailable rather than replaced by hidden fixtures.
 - Typecheck, unit/integration tests, contract tests, responsive Playwright tests, lint, build and security scan pass.
-

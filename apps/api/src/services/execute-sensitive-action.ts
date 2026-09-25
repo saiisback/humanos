@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import * as v from "valibot";
-import { Database } from "@humanos/database";
-import { authorize, POLICY_VERSION, transition } from "@humanos/policy";
+import { Database, type Transaction } from "@humanos/database";
+import {
+  authorize,
+  POLICY_VERSION,
+  transition,
+  type OnchainAuthority,
+} from "@humanos/policy";
 import { JEV_MODEL, JEV_QUESTION_VERSION } from "@humanos/models";
 import {
   hashCanonical,
@@ -14,6 +19,10 @@ import {
   type ExecutionReceipt,
   type JevAssessment,
   type Mission,
+  type JawPermissionGrant,
+  type JawPermissionReview,
+  type JawPermissionVerifier,
+  type WalletAccount,
 } from "@humanos/schemas";
 import { validateEffectResult, type EffectResult } from "@humanos/tools";
 export interface ExecutionDependencies {
@@ -35,6 +44,7 @@ export interface ExecutionDependencies {
     receipt: ExecutionReceipt;
   }) => Promise<void>;
   clock?: () => number;
+  jawPermissionVerifier?: JawPermissionVerifier;
 }
 class ExecutionDenied extends Error {
   constructor(
@@ -47,6 +57,54 @@ class ExecutionDenied extends Error {
 export function createExecutor(deps: ExecutionDependencies) {
   const now = deps.clock ?? Date.now;
   const stamp = () => new Date(now()).toISOString();
+  async function onchainAuthority(
+    tx: Transaction,
+    mission: Mission,
+    action: ActionProposal,
+  ): Promise<OnchainAuthority | undefined> {
+    if (action.type !== "TRANSFER_VALUE") return undefined;
+    const empty: OnchainAuthority = {
+      accountId: "",
+      account: "",
+      grant: null,
+      review: null,
+      evidence: null,
+    };
+    const id = action.payload.permissionId;
+    if (typeof id !== "string" || !/^0x[0-9a-f]{64}$/.test(id)) return empty;
+    // Same advisory lock used by recording/revocation, after the mission lock.
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`jaw:${id}`]);
+    const grant = await tx.get<JawPermissionGrant>("jaw_permissions", id);
+    const binding = (
+      await tx.query<{ account_id: string }>(
+        "SELECT account_id FROM root_bindings WHERE root_id=$1",
+        [mission.rootId],
+      )
+    ).rows[0];
+    const account = binding
+      ? await tx.get<WalletAccount>("accounts", binding.account_id)
+      : null;
+    if (!grant || !account || account.chainId !== 11155111) return empty;
+    const review = await tx.get<JawPermissionReview>(
+      "jaw_reviews",
+      grant.reviewId,
+    );
+    let evidence = null;
+    if (grant.status === "ACTIVE" && deps.jawPermissionVerifier) {
+      try {
+        evidence = await deps.jawPermissionVerifier.verify(grant);
+      } catch {
+        /* No independently verified evidence means no chain authority. */
+      }
+    }
+    return {
+      grant,
+      review,
+      accountId: account.id,
+      account: account.address,
+      evidence,
+    };
+  }
   const audit = (
     mission: Mission,
     action: ActionProposal,
@@ -246,6 +304,7 @@ export function createExecutor(deps: ExecutionDependencies) {
           approval: approval ?? null,
           pinnedJevModelVersion: JEV_MODEL,
           questionVersion: JEV_QUESTION_VERSION,
+          onchain: await onchainAuthority(tx, mission, action),
         };
         const decision = authorize({
           ...policyInput,
@@ -274,6 +333,7 @@ export function createExecutor(deps: ExecutionDependencies) {
         const current = await deps.readAuthorization(action.agentEns);
         const recheck = authorize({
           ...policyInput,
+          onchain: await onchainAuthority(tx, mission, action),
           authorization: current,
           now: new Date(now()),
         });

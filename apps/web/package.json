@@ -6,21 +6,24 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource/dm-sans": "5.2.6",
+    "@fontsource/instrument-serif": "5.2.6",
     "@humanos/schemas": "workspace:*",
+    "@jaw.id/core": "1.5.1",
     "@worldcoin/idkit": "4.3.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "@fontsource/dm-sans": "5.2.6",
-    "@fontsource/instrument-serif": "5.2.6"
+    "viem": "2.56.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
     "@types/react": "19.1.6",
     "@types/react-dom": "19.1.6",
-    "vite": "8.3.0",
     "@vitejs/plugin-react": "6.1.1",
-    "@axe-core/playwright": "4.10.2"
+    "vite": "8.3.0"
   }
 }

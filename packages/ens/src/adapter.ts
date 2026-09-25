@@ -1,12 +1,16 @@
 import {
+  getAddress,
   http,
   keccak256,
   toHex,
-  type Address,
   type Chain,
   type Transport,
 } from "viem";
-import type { AgentAuthorization, Mission } from "@humanos/schemas";
+import {
+  normalizeWalletAddress,
+  type AgentAuthorization,
+  type Mission,
+} from "@humanos/schemas";
 import {
   createAuthorizationReader,
   type AuthorizationReader,
@@ -18,14 +22,13 @@ import {
   deriveAgentPrivateKey,
   EnsWriteError,
   type EnsWriter,
-  type PrivateKeyBackend,
 } from "./register.js";
 import type { TransactionJournal } from "./transaction-journal.js";
 import { nodeOf } from "./resolve.js";
 
 /** Structural match for apps/api EnsAdapter. */
 export interface EnsAdapter {
-  register(mission: Mission): Promise<string>;
+  register(mission: Mission, rootOwner: string): Promise<string>;
   revoke(mission: Mission): Promise<void>;
   readAuthorization(name: string): Promise<AgentAuthorization>;
 }
@@ -39,18 +42,15 @@ export const agentLabelFor = (missionId: string) =>
 export interface HumanOSEnsAdapterOptions {
   reader: AuthorizationReader;
   writer: EnsWriter;
-  operator: PrivateKeyBackend;
   agentKeySeed: `0x${string}`;
   chain: Chain;
   transport: Transport;
   /** Wei sent to a new agent account so it can pay for its own status/receipt writes. */
   agentFundingWei?: bigint;
-  /** Owner recorded for root names; defaults to the operator (humans hold no wallets in the MVP). */
-  rootOwner?: Address;
 }
 
 export function createHumanOSEnsAdapter(options: HumanOSEnsAdapterOptions) {
-  const { reader, writer, operator } = options;
+  const { reader, writer } = options;
 
   const agentBackend = (missionId: string) =>
     createPrivateKeyBackend(
@@ -63,7 +63,10 @@ export function createHumanOSEnsAdapter(options: HumanOSEnsAdapterOptions) {
     return `${agentLabelFor(mission.id)}.${rootLabelFor(mission.rootId)}.${await writer.getParentName()}`;
   }
 
-  async function register(mission: Mission): Promise<string> {
+  async function register(
+    mission: Mission,
+    ownerAddress: string,
+  ): Promise<string> {
     if (mission.approvedCapabilities.length === 0) {
       throw new EnsWriteError(
         "INVALID_INPUT",
@@ -71,7 +74,14 @@ export function createHumanOSEnsAdapter(options: HumanOSEnsAdapterOptions) {
       );
     }
     const rootLabel = rootLabelFor(mission.rootId);
-    const rootOwner = options.rootOwner ?? operator.account.address;
+    let rootOwner: ReturnType<typeof getAddress>;
+    try {
+      rootOwner = getAddress(normalizeWalletAddress(ownerAddress));
+    } catch {
+      throw new EnsWriteError("INVALID_INPUT", "invalid root owner address");
+    }
+    if (/^0x0{40}$/.test(rootOwner.toLowerCase()))
+      throw new EnsWriteError("INVALID_INPUT", "root owner cannot be zero");
     const [bound, state] = await Promise.all([
       writer.rootNodeOf(mission.rootId),
       writer.rootState(rootLabel),
@@ -176,7 +186,6 @@ export function createEnsAdapterFromEnv(
   return createHumanOSEnsAdapter({
     reader,
     writer,
-    operator,
     agentKeySeed: config.agentKeySeed!,
     chain: config.chain,
     transport,
