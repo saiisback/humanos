@@ -27,19 +27,6 @@ export function isSiweVerificationError(
 
 export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
   if (!rpcUrl) throw new Error("SEPOLIA_RPC_URL required");
-  const client = createPublicClient({
-    chain: sepolia,
-    transport: http(rpcUrl),
-  });
-  async function requireSepoliaRpc(): Promise<void> {
-    let chainId: number;
-    try {
-      chainId = await client.getChainId();
-    } catch {
-      throw new SiweVerificationError("unavailable");
-    }
-    if (chainId !== sepolia.id) throw new SiweVerificationError("unavailable");
-  }
   return {
     async verify({ message, signature }) {
       const parsed = parseSiweMessage(message);
@@ -49,6 +36,32 @@ export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
         !/^0x[0-9a-fA-F]+$/.test(signature)
       )
         throw new SiweVerificationError("invalid_signature");
+      let transportFailed = false;
+      const client = createPublicClient({
+        chain: sepolia,
+        transport: http(rpcUrl, {
+          fetchFn: async (input, init) => {
+            try {
+              const response = await fetch(input, init);
+              if (!response.ok) transportFailed = true;
+              return response;
+            } catch (error) {
+              transportFailed = true;
+              throw error;
+            }
+          },
+        }),
+      });
+      async function requireSepoliaRpc(): Promise<void> {
+        let chainId: number;
+        try {
+          chainId = await client.getChainId();
+        } catch {
+          throw new SiweVerificationError("unavailable");
+        }
+        if (chainId !== sepolia.id)
+          throw new SiweVerificationError("unavailable");
+      }
       await requireSepoliaRpc();
       // viem verifies EOAs, ERC-1271 contracts and undeployed ERC-6492 accounts.
       let valid: boolean;
@@ -61,9 +74,11 @@ export function createSepoliaSiweVerifier(rpcUrl: string): SiweVerifier {
         throw new SiweVerificationError("unavailable");
       }
       if (!valid) {
+        if (transportFailed) throw new SiweVerificationError("unavailable");
         // viem can turn a failed ERC-6492 eth_call into false. Probe the RPC
         // again so a transport outage cannot be reported as a bad signature.
         await requireSepoliaRpc();
+        if (transportFailed) throw new SiweVerificationError("unavailable");
         throw new SiweVerificationError("invalid_signature");
       }
       return { address: parsed.address, chainId: parsed.chainId };
