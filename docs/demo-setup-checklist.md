@@ -7,6 +7,7 @@ Put credentials only in the repository's private `.env`, never in chat or Git. K
 - `OPENCODE_API_KEY`: keep the existing key. Real Jev planning and DeepSeek generation completed in the app. No separate Jev or DeepSeek key is needed for this OpenCode setup.
 - JAW login: the test browser already has a valid HumanOS session.
 - Flue: running locally; its workflow route was restored by restarting the outdated process. No new Flue account is needed for this local setup.
+- A one-time local content-only schedule completed with a fresh real DeepSeek result and no upcoming run.
 
 ## Search and email
 

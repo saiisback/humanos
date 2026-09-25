@@ -16,6 +16,7 @@ This record distinguishes live execution from automated fixture tests. No email 
 | Unsupported booking | `9a4aa49d-ca86-4e46-b2e6-cdb999df3331`, initially “Book a restaurant for dinner.”, stopped for Jev review. Nothing was booked. |
 | Refinement and classifier regression | Refining to a reservation-inquiry draft exposed a routing bug: the word “reservation” overrode “draft only.” Added three failing regression cases, corrected the booking condition, and observed all 17 binding/booking tests pass. Live retry then produced a content-only plan. |
 | Second live DeepSeek result | The refined workflow completed with a reservation inquiry template containing placeholders for restaurant/date/party size/contact details. This is a draft, not an availability check or reservation. |
+| One-time local scheduling | Scheduled the same content-only workflow for 06:59 Asia/Tokyo on 26 September. After the due time, a fresh completed output appeared. The schedule showed “One-time run · completed” and “No upcoming run.” No recurring test job was created. |
 
 The live browser check used HumanOS in the in-app browser, which already had an authenticated session. Helium was in use by the user and was left alone.
 
@@ -27,4 +28,4 @@ After integrating the reviewed batch and booking routing into main and fixing th
 
 - User-selected booking site/restaurant, date, time and party size; an audited production recipe and required login. Stop before submission for exact final confirmation.
 - User-selected email recipient and approved message; a connected real email provider. Stop before sending for exact final confirmation.
-- Live research, schedule execution and workflow-specific ENS permission receipts remain unverified in this round.
+- Live research, email delivery, actual reservations and workflow-specific ENS permission receipts remain unverified. One-time content-only scheduling passed; recurring live runs are still unverified.
