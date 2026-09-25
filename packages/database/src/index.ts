@@ -10,7 +10,9 @@ import type {
   Approval,
   ExecutionReceipt,
   Mission,
+  RootAccountBinding,
 } from "@humanos/schemas";
+import { hashCanonical } from "@humanos/schemas";
 import { tableName, validateEntity, type Table } from "./schema.js";
 export * from "./schema.js";
 interface Runner {
@@ -71,6 +73,42 @@ class Repository {
 export class Transaction extends Repository {
   constructor(client: PoolClient) {
     super(client);
+  }
+  async bindRootAccount(
+    rootId: string,
+    accountId: string,
+    now: Date,
+  ): Promise<RootAccountBinding> {
+    const account = await this.query(
+      "SELECT id FROM accounts WHERE id=$1 FOR UPDATE",
+      [accountId],
+    );
+    if (!account.rows[0]) throw new Error("ACCOUNT_NOT_FOUND");
+    const root = await this.query(
+      "SELECT id FROM roots WHERE id=$1 FOR UPDATE",
+      [rootId],
+    );
+    if (!root.rows[0]) throw new Error("ROOT_NOT_FOUND");
+    const existing = await this.query<{ data: RootAccountBinding }>(
+      "SELECT data FROM root_bindings WHERE root_id=$1 OR account_id=$2",
+      [rootId, accountId],
+    );
+    const existingBinding = existing.rows[0]?.data;
+    if (existingBinding) {
+      if (
+        existingBinding.rootId === rootId &&
+        existingBinding.accountId === accountId
+      )
+        return existingBinding;
+      throw new Error("ROOT_ACCOUNT_CONFLICT");
+    }
+    const binding: RootAccountBinding = {
+      id: hashCanonical({ rootId, accountId }),
+      rootId,
+      accountId,
+      createdAt: now.toISOString(),
+    };
+    return this.insert("root_bindings", binding);
   }
   async lockMission(id: string): Promise<Mission> {
     const r = await this.query<{ data: Mission }>(

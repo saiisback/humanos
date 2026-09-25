@@ -4,7 +4,14 @@ import {
   ActionProposalDraftSchema,
   CapabilitySchema,
   JevAssessmentSchema,
+  normalizeWalletAddress,
 } from "../src/domain.js";
+it("normalizes mixed-case EVM addresses to canonical lowercase", () => {
+  expect(
+    normalizeWalletAddress("0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD"),
+  ).toBe("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
+  expect(() => normalizeWalletAddress("0x1234")).toThrow();
+});
 it("rejects unknown capabilities", () => {
   expect(v.safeParse(CapabilitySchema, "shell.exec").success).toBe(false);
 });

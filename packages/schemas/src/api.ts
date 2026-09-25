@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import {
   CapabilitySchema,
+  ChainIdSchema,
   ActionProposalSchema,
   ApprovalSchema,
   ExecutionReceiptSchema,
@@ -11,6 +12,7 @@ import {
   PolicyDecisionSchema,
   RootIdentitySchema,
   TimestampSchema,
+  WalletAccountSchema,
 } from "./domain.js";
 import { AuditEventSchema } from "./events.js";
 export const ReadinessSchema = v.strictObject({
@@ -37,6 +39,31 @@ export const SessionResponseSchema = v.strictObject({
   root: v.nullable(RootIdentitySchema),
 });
 export type SessionResponse = v.InferOutput<typeof SessionResponseSchema>;
+export const CreateSiweChallengeResponseSchema = v.strictObject({
+  challengeId: IdSchema,
+  nonce: IdSchema,
+  expiresAt: TimestampSchema,
+  chainId: ChainIdSchema,
+  domain: v.string(),
+  uri: v.string(),
+});
+export type CreateSiweChallengeResponse = v.InferOutput<
+  typeof CreateSiweChallengeResponseSchema
+>;
+export const VerifySiweRequestSchema = v.strictObject({
+  challengeId: IdSchema,
+  message: v.string(),
+  signature: v.string(),
+});
+export type VerifySiweRequest = v.InferOutput<typeof VerifySiweRequestSchema>;
+export const AuthSessionResponseSchema = v.strictObject({
+  account: WalletAccountSchema,
+  root: v.nullable(RootIdentitySchema),
+  jawConfigured: v.boolean(),
+});
+export type AuthSessionResponse = v.InferOutput<
+  typeof AuthSessionResponseSchema
+>;
 export const CreateMissionRequestSchema = v.strictObject({
   goal: v.pipe(v.string(), v.minLength(1), v.maxLength(10000)),
   expiresAt: v.optional(TimestampSchema),

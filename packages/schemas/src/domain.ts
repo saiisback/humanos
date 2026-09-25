@@ -3,6 +3,23 @@ export const IdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 export const HexSchema = v.pipe(v.string(), v.regex(/^0x[0-9a-f]{64}$/));
 export type Hex = `0x${string}`;
 export const TimestampSchema = v.pipe(v.string(), v.isoTimestamp());
+export function normalizeWalletAddress(address: string): string {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address))
+    throw new Error("INVALID_WALLET_ADDRESS");
+  return address.toLowerCase();
+}
+export const WalletAddressSchema = v.pipe(
+  v.string(),
+  v.regex(/^0x[0-9a-fA-F]{40}$/),
+  v.check((address) => {
+    try {
+      return address === normalizeWalletAddress(address);
+    } catch {
+      return false;
+    }
+  }),
+);
+export const ChainIdSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
 export const CapabilitySchema = v.picklist([
   "documents.read",
   "documents.disclose",
@@ -82,6 +99,43 @@ export const RootIdentitySchema = v.strictObject({
   verificationEnvironment: v.picklist(["staging", "production"]),
 });
 export type RootIdentity = v.InferOutput<typeof RootIdentitySchema>;
+export const WalletAccountSchema = v.pipe(
+  v.strictObject({
+    id: IdSchema,
+    address: WalletAddressSchema,
+    chainId: ChainIdSchema,
+    createdAt: TimestampSchema,
+  }),
+  v.check(({ id, address, chainId }) => id === `${chainId}:${address}`),
+);
+export type WalletAccount = v.InferOutput<typeof WalletAccountSchema>;
+export const RootAccountBindingSchema = v.strictObject({
+  id: IdSchema,
+  rootId: IdSchema,
+  accountId: IdSchema,
+  createdAt: TimestampSchema,
+});
+export type RootAccountBinding = v.InferOutput<typeof RootAccountBindingSchema>;
+export const JawPermissionGrantSchema = v.strictObject({
+  id: IdSchema,
+  accountId: IdSchema,
+  chainId: ChainIdSchema,
+  permissionId: IdSchema,
+  status: v.picklist(["ACTIVE", "REVOKED", "EXPIRED"]),
+  targets: v.array(WalletAddressSchema),
+  functions: v.array(v.string()),
+  spends: v.array(
+    v.strictObject({
+      token: WalletAddressSchema,
+      allowance: v.string(),
+      period: v.string(),
+    }),
+  ),
+  expiresAt: TimestampSchema,
+  createdAt: TimestampSchema,
+  revokedAt: v.nullable(TimestampSchema),
+});
+export type JawPermissionGrant = v.InferOutput<typeof JawPermissionGrantSchema>;
 export const MissionProposalSchema = v.strictObject({
   goal: v.pipe(v.string(), v.minLength(1), v.maxLength(10000)),
   title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),

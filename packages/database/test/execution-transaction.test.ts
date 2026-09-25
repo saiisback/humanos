@@ -15,6 +15,7 @@ const db = new Database(
 );
 const date = new Date().toISOString(),
   future = new Date(Date.now() + 3600000).toISOString();
+const accountId = "11155111:0x1111111111111111111111111111111111111111";
 const mission: Mission = {
   id: "m",
   rootId: "r",
@@ -83,6 +84,12 @@ beforeAll(async () => {
     ensName: null,
     createdAt: date,
     verificationEnvironment: "staging",
+  });
+  await db.insert("accounts", {
+    id: accountId,
+    address: "0x1111111111111111111111111111111111111111",
+    chainId: 11155111,
+    createdAt: date,
   });
   await db.insert("missions", mission);
   await db.insert("actions", action);
@@ -229,6 +236,7 @@ it("same human may separately approve distinct action bindings", async () => {
 it("stores sessions durably across pool restarts", async () => {
   await db.insert("sessions", {
     id: "token-hash",
+    accountId,
     rootId: "r",
     expiresAt: future,
   });
@@ -287,6 +295,7 @@ it("sessions require valid expiry and root, challenges require valid expiry", as
   await expect(
     db.insert("sessions", {
       id: "bad-session",
+      accountId,
       rootId: "r",
       expiresAt: "tomorrow",
     }),

@@ -68,9 +68,17 @@ describe("actual API authentication and honest unavailable state", () => {
       createdAt: stamp,
       verificationEnvironment: "staging",
     });
+    const accountId = "11155111:0x1111111111111111111111111111111111111111";
+    await db.insert("accounts", {
+      id: accountId,
+      address: "0x1111111111111111111111111111111111111111",
+      chainId: 11155111,
+      createdAt: stamp,
+    });
     const token = randomUUID();
     await db.insert("sessions", {
       id: hashCanonical(token),
+      accountId,
       rootId,
       expiresAt: new Date(Date.now() + 60000).toISOString(),
     });
@@ -99,6 +107,7 @@ describe("actual API authentication and honest unavailable state", () => {
     ).toBe(404);
     await db.put("sessions", {
       id: hashCanonical(token),
+      accountId,
       rootId,
       expiresAt: "2020-01-01T00:00:00Z",
     });

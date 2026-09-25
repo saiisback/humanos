@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Database, type ChallengeRecord } from "@humanos/database";
 import {
   hashCanonical,
+  normalizeWalletAddress,
   type Mission,
   type Approval,
   type AuditEvent,
@@ -52,14 +53,25 @@ async function setup(
     expiresAt = new Date(Date.now() + 900000).toISOString();
   const rootId = randomUUID(),
     token = randomUUID();
+  const address = normalizeWalletAddress(
+    "0x" + hashCanonical(rootId).slice(2, 42),
+  );
+  const accountId = `11155111:${address}`;
   await db.insert("roots", {
     id: rootId,
     ensName: null,
     createdAt: stamp,
     verificationEnvironment: "staging",
   });
+  await db.insert("accounts", {
+    id: accountId,
+    address,
+    chainId: 11155111,
+    createdAt: stamp,
+  });
   await db.insert("sessions", {
     id: hashCanonical(token),
+    accountId,
     rootId,
     expiresAt,
     nullifier: "1",
@@ -105,7 +117,7 @@ async function setup(
     cookie: "humanos_session=" + token,
     "content-type": "application/json",
   };
-  return { app, mission, action, headers, rootId, expiresAt };
+  return { app, mission, action, headers, rootId, accountId, expiresAt };
 }
 it("refreshes expired challenge without replacing approval; old request cannot verify", async () => {
   const s = await setup();
@@ -162,6 +174,7 @@ it("refuses cancelled approval refresh and another session takeover", async () =
   const secondToken = randomUUID();
   await db.insert("sessions", {
     id: hashCanonical(secondToken),
+    accountId: s.accountId,
     rootId: s.rootId,
     expiresAt: s.expiresAt,
     nullifier: "1",

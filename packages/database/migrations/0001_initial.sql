@@ -1,6 +1,10 @@
 CREATE TABLE IF NOT EXISTS roots (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS accounts (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS root_bindings (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED NOT NULL REFERENCES roots(id), account_id text GENERATED ALWAYS AS (data->>'accountId') STORED NOT NULL REFERENCES accounts(id), created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS jaw_permissions (id text PRIMARY KEY, data jsonb NOT NULL, account_id text GENERATED ALWAYS AS (data->>'accountId') STORED NOT NULL REFERENCES accounts(id), created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS nullifiers (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS sessions (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS account_id text GENERATED ALWAYS AS (data->>'accountId') STORED REFERENCES accounts(id);
 CREATE TABLE IF NOT EXISTS missions (id text PRIMARY KEY, data jsonb NOT NULL, root_id text GENERATED ALWAYS AS (data->>'rootId') STORED REFERENCES roots(id), created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS agents (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS actions (id text PRIMARY KEY, data jsonb NOT NULL, mission_id text GENERATED ALWAYS AS (data->>'missionId') STORED REFERENCES missions(id), created_at timestamptz NOT NULL DEFAULT now());
@@ -11,3 +15,7 @@ CREATE TABLE IF NOT EXISTS challenges (id text PRIMARY KEY, data jsonb NOT NULL,
 CREATE INDEX IF NOT EXISTS missions_root ON missions(root_id);
 CREATE INDEX IF NOT EXISTS actions_mission ON actions(mission_id);
 CREATE INDEX IF NOT EXISTS approvals_action ON approvals(action_id);
+CREATE UNIQUE INDEX IF NOT EXISTS root_bindings_root_unique ON root_bindings(root_id);
+CREATE UNIQUE INDEX IF NOT EXISTS root_bindings_account_unique ON root_bindings(account_id);
+CREATE INDEX IF NOT EXISTS jaw_permissions_account ON jaw_permissions(account_id);
+CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
