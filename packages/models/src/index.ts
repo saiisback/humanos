@@ -1,4 +1,6 @@
 export { createDeepSeekClient } from "./deepseek/client.js";
+export { createContentGenerator } from "./deepseek/content.js";
+export { createWorkflowSelector } from "./jev/workflow-selector.js";
 export * from "./opencode.js";
 export * from "./deepseek/provider.js";
 export { createJevClient } from "./jev/client.js";
