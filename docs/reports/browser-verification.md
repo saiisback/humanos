@@ -1,12 +1,29 @@
 # Final browser verification — 24 September 2026 JST
 
+## Complete final run: 40 tests
+
+**40/40 passed in 1.4 minutes**, with no failures or skips, after rebuilding the web app at application HEAD `85fe85f`. Playwright 1.63.0 recorded all desktop/mobile cases with one worker. This final broad run includes the verified-approval cancellation regression: 18 actual API/PostgreSQL journey checks, 2 live unmodified API onboarding checks, and 20 intercepted-HTTP UI/accessibility checks. The provider-fixture and live-device boundaries below still apply.
+
+Exact executed command:
+
+```sh
+pnpm --filter @humanos/web build && HUMANOS_LIVE_API=1 HUMANOS_RECORD=1 HUMANOS_RECORD_DIR=/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-complete pnpm exec playwright test
+```
+
+The build and TypeScript check passed. The complete artifact directory contains 42 nonempty WebM files (40 tests plus 2 accessibility helper pages), totaling 6,693,032 bytes. Four desktop/mobile mission/onboarding screenshots are preserved in its `screenshots/` subdirectory. Earlier 38-case and 2-case follow-up recordings remain intact in their original directories.
+
+- [Final desktop application/calendar success](/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-complete/backend-REAL-API-PostgreSQ-e2dc0-calendar-receipt-and-replay-desktop/video.webm)
+- [Final mobile application/calendar success](/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-complete/backend-REAL-API-PostgreSQ-e2dc0-calendar-receipt-and-replay-mobile/video.webm)
+- [Final desktop verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-complete/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-desktop/video.webm)
+- [Final mobile verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-complete/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-mobile/video.webm)
+
 ## Reproduction
 
 Start the real API at `127.0.0.1:3001`, web at `127.0.0.1:5173`, and dedicated PostgreSQL at `127.0.0.1:55432`. Build `@humanos/web` first: the backend-connected harness serves that build.
 
 ```sh
 pnpm --filter @humanos/web build
-HUMANOS_LIVE_API=1 HUMANOS_RECORD=1 HUMANOS_RECORD_DIR=/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-final pnpm exec playwright test
+HUMANOS_LIVE_API=1 HUMANOS_RECORD=1 HUMANOS_RECORD_DIR=/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924-complete pnpm exec playwright test
 ```
 
 Video recording is opt-in with `HUMANOS_RECORD=1`; recording mode uses one worker, a 120-second per-test timeout and a 20-second assertion timeout to accommodate video encoding on the shared host. `HUMANOS_RECORD_DIR` selects a persistent local artifact directory outside the repository. Ordinary runs do not record video and do not delete that external directory. The recordings are not committed.
@@ -27,7 +44,7 @@ Mission goal creation, capability approval and ENS identity display; application
 
 The initial four-worker run was stopped after observing 30-second test timeouts under host contention and `ECONNREFUSED 127.0.0.1:3001` from the live API check. It was not a passing run. Videos, error context and traces remain in `/Users/saikarthik/.codex/artifacts/humanos-browser-verification-20260924/`. The final run uses the separate `-final` artifact directory and recording-only resource/time limits described above.
 
-## Final result
+## Earlier full result: 38 tests
 
 **38 passed in 1.3 minutes**, with one recording worker using Playwright 1.63.0. No failures or skips in the final run. This comprises 16 real-API/PostgreSQL journey checks, 2 live unmodified API onboarding checks, and 20 intercepted-HTTP UI/accessibility checks, evenly split across desktop and mobile projects. The run began at repository HEAD `1ae0f75`; this report/config commit follows the test run.
 
@@ -58,7 +75,7 @@ The recorded targeted regression passed **2/2** on desktop/mobile after the API 
 HUMANOS_RECORD=1 HUMANOS_RECORD_DIR=/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924 pnpm exec playwright test backend.spec.ts -g 'cancellation after verified approval'
 ```
 
-The suite now contains 40 cases. The earlier full recording was 38/38; this follow-up ran only the two new cases, without claiming a new 40-case full run.
+At this follow-up stage the suite contained 40 cases, while the prior full recording was 38/38. This targeted follow-up ran only the two new cases. The complete 40-case run documented at the top was performed afterward.
 
 - [Mobile verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-mobile/video.webm)
 - [Desktop verified-action cancellation](/Users/saikarthik/.codex/artifacts/humanos-browser-verified-cancel-20260924/backend-REAL-API-PostgreSQ-71ac7-oval-rejects-without-effect-desktop/video.webm)
