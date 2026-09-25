@@ -47,6 +47,9 @@ export function AppShell({
     trigger.current = document.activeElement as HTMLElement;
     setSheet(next);
   }
+  function switchSheet(next: Sheet) {
+    setSheet(next);
+  }
   function closeSheet() {
     setSheet(null);
     requestAnimationFrame(() => trigger.current?.focus());
@@ -186,14 +189,16 @@ export function AppShell({
             Connections
           </button>
         </header>
-        {error && (
-          <div className="error" role="alert">
-            {error}{" "}
-            <button className="text-button" disabled={busy} onClick={onRetry}>
-              Retry connection
-            </button>
-          </div>
-        )}
+        <div className="feedback-slot">
+          {error && (
+            <div className="error" role="alert">
+              {error}{" "}
+              <button className="text-button" disabled={busy} onClick={onRetry}>
+                Retry connection
+              </button>
+            </div>
+          )}
+        </div>
         <main id="main" className="conversation-scroll">
           <div className="conversation-inner">{children}</div>
         </main>
@@ -218,11 +223,26 @@ export function AppShell({
           >
             ×
           </button>
-          {sheet === "missions"
-            ? missionList
-            : sheet === "identity"
-              ? identity
-              : connections}
+          {sheet === "missions" ? (
+            <>
+              {missionList}
+              <nav
+                className="sheet-secondary"
+                aria-label="More workspace sections"
+              >
+                <button onClick={() => switchSheet("identity")}>
+                  Identity
+                </button>
+                <button onClick={() => switchSheet("connections")}>
+                  Connections
+                </button>
+              </nav>
+            </>
+          ) : sheet === "identity" ? (
+            identity
+          ) : (
+            connections
+          )}
         </dialog>
       )}
     </div>

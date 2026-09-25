@@ -129,9 +129,11 @@ small,
   min-width: 0;
   min-height: 0;
   display: grid;
+  grid-template-areas: "topbar" "feedback" "conversation" "composer";
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 .topbar {
+  grid-area: topbar;
   min-height: 64px;
   display: flex;
   align-items: center;
@@ -179,6 +181,11 @@ small,
   background: #fff6f3;
   font-size: 14px;
 }
+.feedback-slot {
+  grid-area: feedback;
+  min-width: 0;
+  min-height: 0;
+}
 .text-button {
   color: var(--danger);
   background: transparent;
@@ -188,9 +195,11 @@ small,
   min-height: 44px;
 }
 .conversation-scroll {
+  grid-area: conversation;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
+  overflow-wrap: anywhere;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -206,6 +215,7 @@ small,
   padding-bottom: 42px;
 }
 .composer-slot {
+  grid-area: composer;
   padding: 10px 0 calc(12px + env(safe-area-inset-bottom));
   background: var(--canvas);
   border-top: 1px solid var(--line);
@@ -313,12 +323,14 @@ small,
 }
 .transcript-item {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .transcript-human {
   display: flex;
   justify-content: flex-end;
 }
 .human-message {
+  min-width: 0;
   max-width: min(86%, 600px);
   text-align: right;
 }
@@ -335,6 +347,7 @@ small,
   display: block;
 }
 .agent-message {
+  min-width: 0;
   max-width: 680px;
   font-size: 17px;
   line-height: 1.55;
@@ -391,6 +404,11 @@ small,
   align-items: start;
   gap: 12px;
 }
+.review-heading > div,
+.review-heading > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .state-label {
   font-size: 12px;
   color: var(--muted);
@@ -405,6 +423,8 @@ small,
 }
 .steps li {
   display: flex;
+  min-width: 0;
+  overflow-wrap: anywhere;
   gap: 12px;
   align-items: flex-start;
   line-height: 1.45;
@@ -454,6 +474,8 @@ small,
   margin-top: 17px;
 }
 .effect {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 13px 0 18px;
   font-size: 16px;
 }
@@ -466,9 +488,17 @@ small,
 }
 .review-facts div {
   display: flex;
+  min-width: 0;
+  overflow-wrap: anywhere;
   justify-content: space-between;
   gap: 12px;
   font-size: 13px;
+}
+.review-facts strong,
+.assessment-grid > div,
+dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .review-facts span {
   color: var(--muted);
@@ -509,7 +539,7 @@ dd {
 }
 .assessment-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-top: 16px;
   font-size: 12px;
@@ -530,6 +560,7 @@ dd {
   padding: 28px 20px;
   color: var(--ink);
   overflow: auto;
+  overflow-wrap: anywhere;
 }
 .sheet::backdrop {
   background: #1b211e69;
@@ -559,6 +590,24 @@ dd {
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+.mission-nav strong,
+.desktop-rail,
+.connection > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sheet-secondary {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 12px;
+  display: grid;
+}
+.sheet-secondary button {
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink);
 }
 .mission-nav[aria-current="page"] {
   background: var(--quiet);

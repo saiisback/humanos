@@ -35,8 +35,8 @@ export function Composer({
       <div className="composer-bottom">
         <span className="fine">{providerNote}</span>
         <button
-          aria-label="Create mission"
-          title="Create mission"
+          aria-label="Send · Create mission"
+          title="Send · Create mission"
           type="submit"
           disabled={disabled || !canSubmit || !value.trim()}
         >

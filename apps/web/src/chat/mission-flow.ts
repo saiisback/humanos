@@ -7,15 +7,104 @@ import type { TranscriptItem } from "./types";
 
 const label = (value: string) =>
   value.toLowerCase().replaceAll("_", " ").replaceAll(".", " ");
+function readable(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return null;
+}
+function field(
+  payload: ActionProposal["payload"],
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const value = readable(payload[key]);
+    if (value) return value;
+  }
+  return null;
+}
+function fields(payload: ActionProposal["payload"], keys: string[]) {
+  return keys.flatMap((key) => {
+    const value = readable(payload[key]);
+    return value ? [{ key, value }] : [];
+  });
+}
 function actionEffect(action: ActionProposal): string {
   const payload = action.payload;
-  const target = ["to", "recipient", "target", "address", "url"]
-    .map((key) => payload[key])
-    .find((value) => typeof value === "string");
-  const subject = ["subject", "title", "summary", "amount", "value"]
-    .map((key) => payload[key])
-    .find((value) => typeof value === "string" || typeof value === "number");
-  return `${label(action.type)}${target ? ` to ${target}` : ""}${subject ? ` · ${subject}` : ""}. ${action.reason}`;
+  const transfer = action.type === "TRANSFER_VALUE";
+  const application = action.type === "SUBMIT_APPLICATION";
+  const recipient = action.type === "SEND_EMAIL" || transfer;
+  const targets = fields(
+    payload,
+    application
+      ? [
+          "event",
+          "application",
+          "organization",
+          "target",
+          "url",
+          "to",
+          "recipient",
+          "address",
+        ]
+      : [
+          "to",
+          "recipient",
+          "destination",
+          "target",
+          "address",
+          "event",
+          "application",
+          "organization",
+          "url",
+          "contract",
+        ],
+  );
+  const amount = field(payload, ["amount", "value"]);
+  const currency = field(payload, ["currency", "symbol", "asset", "token"]);
+  const constraints = fields(payload, [
+    "constraints",
+    "spendLimit",
+    "maxSpend",
+    "limit",
+    "allowedTargets",
+    "allowedContracts",
+    "restrictions",
+  ]);
+  const targetLabel = application
+    ? "Application target"
+    : recipient
+      ? "Recipient"
+      : "Target";
+  const primary = targets[0];
+  const parts = [
+    label(action.type),
+    primary ? `${targetLabel}: ${primary.value}` : `${targetLabel} unavailable`,
+  ];
+  for (const extra of targets.slice(1))
+    if (extra.value !== primary?.value)
+      parts.push(`${label(extra.key)}: ${extra.value}`);
+  if (transfer || amount)
+    parts.push(
+      amount
+        ? `Amount: ${amount}${currency ? ` ${currency}` : " (currency unavailable)"}`
+        : "Amount unavailable",
+    );
+  if (transfer && !currency) parts.push("Currency unavailable");
+  const value = readable(payload.value);
+  if (value && value !== amount) parts.push(`Value: ${value}`);
+  const title = field(payload, ["subject", "title", "summary"]);
+  if (title) parts.push(`Description: ${title}`);
+  parts.push(
+    constraints.length
+      ? `Constraints: ${constraints.map(({ key, value }) => `${label(key)} ${value}`).join("; ")}`
+      : "Constraints unavailable",
+  );
+  parts.push(
+    `Expires ${new Date(action.expiresAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+  );
+  if (action.reason) parts.push(action.reason);
+  return parts.join(" · ");
 }
 
 export function buildTranscript(
@@ -74,6 +163,16 @@ export function buildTranscript(
         terminal: true,
       });
     } else if (
+      approval &&
+      ["DENIED", "CANCELLED", "EXPIRED"].includes(approval.status)
+    ) {
+      items.push({
+        kind: "denial",
+        id: `denial-${approval.id}`,
+        text: `Action ${label(approval.status)}. No execution receipt was issued.`,
+        terminal: true,
+      });
+    } else if (
       ["COMPLETED", "REJECTED", "EXPIRED", "REVOKED", "FAILED"].includes(
         mission.state,
       )
@@ -82,16 +181,6 @@ export function buildTranscript(
         kind: "denial",
         id: `closed-${action.id}`,
         text: `Action ${label(action.type)} is closed because this mission is ${label(mission.state)}.`,
-        terminal: true,
-      });
-    } else if (
-      approval &&
-      ["DENIED", "CANCELLED", "EXPIRED"].includes(approval.status)
-    ) {
-      items.push({
-        kind: "denial",
-        id: `denial-${approval.id}`,
-        text: `Action ${label(approval.status)}. No execution receipt was issued.`,
         terminal: true,
       });
     } else {

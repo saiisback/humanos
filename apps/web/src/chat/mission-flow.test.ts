@@ -122,4 +122,117 @@ describe("buildTranscript", () => {
       ),
     ).toBe(false);
   });
+  it("names transfer recipient, amount, currency, constraint and expiry even with a title", () => {
+    const d = detail("AWAITING_APPROVAL");
+    d.actions.push({
+      id: "transfer",
+      rootId: "root-1",
+      missionId: "mission-1",
+      agentEns: "agent.eth",
+      type: "TRANSFER_VALUE",
+      capability: "value.transfer",
+      reason: "Payment approved for review",
+      payload: {
+        title: "Event fee",
+        to: "0x1111111111111111111111111111111111111111",
+        amount: "0.015",
+        currency: "ETH",
+        spendLimit: "0.020 ETH",
+      },
+      payloadHash: hash,
+      nonce: "nonce-1",
+      expiresAt: "2026-10-01T00:00:00.000Z",
+      createdAt: "2026-09-25T00:00:00.000Z",
+    });
+    const item = buildTranscript(d, ready).find(
+      (entry) => entry.kind === "approval",
+    );
+    if (item?.kind !== "approval") throw new Error("Missing review");
+    expect(item.effect).toContain("0x1111111111111111111111111111111111111111");
+    expect(item.effect).toContain("0.015 ETH");
+    expect(item.effect).toContain("0.020 ETH");
+    expect(item.effect).toContain("Oct 1");
+  });
+  it("names the application target and missing material fields", () => {
+    const d = detail("AWAITING_APPROVAL");
+    d.actions.push({
+      id: "application",
+      rootId: "root-1",
+      missionId: "mission-1",
+      agentEns: "agent.eth",
+      type: "SUBMIT_APPLICATION",
+      capability: "application.submit",
+      reason: "Submit reviewed application",
+      payload: { title: "My application", event: "ETH Tokyo" },
+      payloadHash: hash,
+      nonce: "nonce-1",
+      expiresAt: "2026-10-01T00:00:00.000Z",
+      createdAt: "2026-09-25T00:00:00.000Z",
+    });
+    const item = buildTranscript(d, ready).find(
+      (entry) => entry.kind === "approval",
+    );
+    if (item?.kind !== "approval") throw new Error("Missing review");
+    expect(item.effect).toContain("ETH Tokyo");
+    expect(item.effect).toContain("Constraints unavailable");
+    const missing = detail("AWAITING_APPROVAL");
+    missing.actions.push({
+      ...d.actions[0]!,
+      id: "transfer",
+      type: "TRANSFER_VALUE",
+      capability: "value.transfer",
+      payload: { title: "Fee" },
+    });
+    const unknown = buildTranscript(missing, ready).find(
+      (entry) => entry.kind === "approval",
+    );
+    if (unknown?.kind !== "approval") throw new Error("Missing review");
+    expect(unknown.effect).toContain("Recipient unavailable");
+    expect(unknown.effect).toContain("Amount unavailable");
+    expect(unknown.effect).toContain("Currency unavailable");
+  });
+  it("retains explicit cancelled approval after mission rejection", () => {
+    const d = detail("REJECTED");
+    d.actions.push({
+      id: "action-1",
+      rootId: "root-1",
+      missionId: "mission-1",
+      agentEns: "agent.eth",
+      type: "SEND_EMAIL",
+      capability: "email.send",
+      reason: "Send mail",
+      payload: { to: "alice@example.com" },
+      payloadHash: hash,
+      nonce: "nonce-1",
+      expiresAt: "2026-10-01T00:00:00.000Z",
+      createdAt: "2026-09-25T00:00:00.000Z",
+    });
+    d.approvals.push({
+      id: "approval-1",
+      actionId: "action-1",
+      binding: {
+        rootId: "root-1",
+        agentEns: "agent.eth",
+        missionId: "mission-1",
+        actionType: "SEND_EMAIL",
+        payloadHash: hash,
+        nonce: "nonce-1",
+        expiresAt: "2026-10-01T00:00:00.000Z",
+      },
+      bindingHash: hash,
+      kind: "WORLD_FRESH",
+      status: "CANCELLED",
+      createdAt: "2026-09-25T00:00:00.000Z",
+      verifiedAt: null,
+      consumedAt: null,
+      nullifierHash: null,
+    });
+    const items = buildTranscript(d, ready);
+    expect(
+      items.some(
+        (item) => item.kind === "denial" && item.text.includes("cancelled"),
+      ),
+    ).toBe(true);
+    expect(items.some((item) => item.kind === "approval")).toBe(false);
+  });
 });
