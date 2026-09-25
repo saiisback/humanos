@@ -3,9 +3,12 @@ import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
+import { parseSiweMessage } from "viem/siwe";
 import { Database, type SessionRecord } from "@humanos/database";
 import {
   hashCanonical,
+  normalizeWalletAddress,
+  VerifySiweRequestSchema,
   CreateMissionRequestSchema,
   AuthorizeMissionRequestSchema,
   VerifyWorldRequestSchema,
@@ -21,6 +24,7 @@ import {
   type AgentAuthorization,
   type MissionProposal,
   type ActionProposalDraft,
+  type WalletAccount,
 } from "@humanos/schemas";
 import {
   authorize,
@@ -34,6 +38,7 @@ import {
   createExecutor,
   type ExecutionDependencies,
 } from "./services/execute-sensitive-action.js";
+import type { SiweVerifier } from "./services/siwe.js";
 export interface EnsAdapter {
   register: (mission: Mission) => Promise<string>;
   revoke: (mission: Mission) => Promise<void>;
@@ -42,6 +47,7 @@ export interface EnsAdapter {
 export interface ApiConfig {
   db: Database;
   origin: string;
+  siweVerifier?: SiweVerifier;
   world?: ReturnType<typeof createWorldVerifier>;
   models?: {
     proposeMission: (input: unknown) => Promise<MissionProposal>;
@@ -78,6 +84,17 @@ function requireService<T>(service: T | undefined): T {
 }
 export function createApi(config: ApiConfig) {
   const { db } = config;
+  const webOrigin = new URL(config.origin);
+  if (
+    !["http:", "https:"].includes(webOrigin.protocol) ||
+    webOrigin.pathname !== "/" ||
+    webOrigin.search ||
+    webOrigin.hash ||
+    webOrigin.username ||
+    webOrigin.password
+  )
+    throw new Error("INVALID_WEB_ORIGIN");
+  const siweOrigin = webOrigin.origin;
   const app = new Hono<Env>();
   app.use("*", bodyLimit({ maxSize: 100000 }));
   app.use("*", async (c, next) => {
@@ -86,7 +103,7 @@ export function createApi(config: ApiConfig) {
     if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
       const origin = c.req.header("origin");
       if (
-        (origin && origin !== config.origin) ||
+        (origin && origin !== siweOrigin) ||
         c.req.header("sec-fetch-site") === "cross-site"
       )
         throw new HttpError(403, "FORBIDDEN");
@@ -119,7 +136,7 @@ export function createApi(config: ApiConfig) {
   const cookieOpts = {
     httpOnly: true,
     sameSite: "Strict" as const,
-    secure: config.origin.startsWith("https:"),
+    secure: webOrigin.protocol === "https:",
     path: "/",
   };
   async function owner(c: Context, id: string): Promise<Mission> {
@@ -186,6 +203,7 @@ export function createApi(config: ApiConfig) {
   app.get("/api/health", (c) => c.json({ status: "ok" }));
   app.get("/api/ready", (c) => {
     const services = [
+      ["JAW SIWE", !!config.siweVerifier],
       ["World ID", !!config.world],
       ["DeepSeek and Jev", !!config.models],
       ["ENSv2 Sepolia", !!config.ens],
@@ -204,7 +222,183 @@ export function createApi(config: ApiConfig) {
   app.get("/api/session", async (c) => {
     const s = await session(c);
     return c.json({
-      root: s ? await db.get<RootIdentity>("roots", s.rootId) : null,
+      root: s?.rootId ? await db.get<RootIdentity>("roots", s.rootId) : null,
+    });
+  });
+  app.post("/api/auth/siwe/nonce", async (c) => {
+    requireService(config.siweVerifier);
+    const now = new Date();
+    const nonce = randomBytes(16).toString("hex");
+    const token = randomBytes(32).toString("hex");
+    const challengeId = randomUUID();
+    const expiresAt = new Date(now.getTime() + 300000).toISOString();
+    await db.insert("challenges", {
+      id: challengeId,
+      kind: "siwe",
+      nonce,
+      ownerHash: hashCanonical(token),
+      createdAt: now.toISOString(),
+      expiresAt,
+      consumedAt: null,
+    });
+    setCookie(c, "humanos_auth_challenge", token, {
+      ...cookieOpts,
+      maxAge: 300,
+    });
+    return c.json({
+      challengeId,
+      nonce,
+      expiresAt,
+      chainId: 11155111,
+      domain: webOrigin.host,
+      uri: siweOrigin,
+    });
+  });
+  app.post("/api/auth/siwe/verify", async (c) => {
+    const verifier = requireService(config.siweVerifier);
+    const input = v.parse(VerifySiweRequestSchema, await c.req.json());
+    const challenge = await db.get<{
+      id: string;
+      kind: string;
+      nonce: string;
+      ownerHash: string;
+      createdAt: string;
+      expiresAt: string;
+      consumedAt: string | null;
+    }>("challenges", input.challengeId);
+    const token = getCookie(c, "humanos_auth_challenge");
+    const now = new Date();
+    if (
+      !token ||
+      !challenge ||
+      challenge.kind !== "siwe" ||
+      challenge.ownerHash !== hashCanonical(token) ||
+      challenge.consumedAt ||
+      Date.parse(challenge.expiresAt) <= now.getTime()
+    )
+      throw new HttpError(403, "INVALID_CHALLENGE");
+    const parsed = parseSiweMessage(input.message);
+    const issuedAt = parsed.issuedAt?.getTime();
+    const expiration = parsed.expirationTime?.getTime();
+    if (
+      !parsed.address ||
+      parsed.version !== "1" ||
+      !issuedAt ||
+      !expiration ||
+      !Number.isFinite(issuedAt) ||
+      !Number.isFinite(expiration) ||
+      issuedAt > now.getTime() ||
+      issuedAt < Date.parse(challenge.createdAt) - 60000 ||
+      expiration <= now.getTime() ||
+      expiration > Date.parse(challenge.expiresAt) ||
+      (parsed.notBefore &&
+        (!Number.isFinite(parsed.notBefore.getTime()) ||
+          parsed.notBefore.getTime() > now.getTime()))
+    )
+      throw new HttpError(403, "INVALID_SIWE_MESSAGE");
+    let verified: Awaited<ReturnType<SiweVerifier["verify"]>>;
+    try {
+      verified = await verifier.verify({
+        message: input.message,
+        signature: input.signature,
+      });
+    } catch {
+      throw new HttpError(403, "INVALID_SIGNATURE");
+    }
+    let address: string;
+    try {
+      address = normalizeWalletAddress(parsed.address);
+      if (
+        normalizeWalletAddress(verified.address) !== address ||
+        verified.chainId !== parsed.chainId
+      )
+        throw new Error("VERIFIER_MISMATCH");
+    } catch {
+      throw new HttpError(403, "INVALID_SIGNATURE");
+    }
+    const validContext =
+      parsed.domain === webOrigin.host &&
+      parsed.uri === siweOrigin &&
+      parsed.chainId === 11155111 &&
+      parsed.nonce === challenge.nonce &&
+      (!parsed.scheme || parsed.scheme === webOrigin.protocol.slice(0, -1));
+    if (!validContext) {
+      try {
+        await db.transaction((tx) =>
+          tx.consumeChallenge(challenge.id, new Date()),
+        );
+      } catch {
+        throw new HttpError(403, "INVALID_CHALLENGE");
+      }
+      throw new HttpError(403, "INVALID_SIWE_CONTEXT");
+    }
+    const accountId = `11155111:${address}`;
+    const sessionToken = randomBytes(32).toString("hex");
+    let account: WalletAccount;
+    let root: RootIdentity | null = null;
+    try {
+      await db.transaction(async (tx) => {
+        await tx.consumeChallenge(challenge.id, new Date());
+        const freshAccount: WalletAccount = {
+          id: accountId,
+          address,
+          chainId: 11155111,
+          createdAt: now.toISOString(),
+        };
+        await tx.query(
+          "INSERT INTO accounts (id,data) VALUES ($1,$2::jsonb) ON CONFLICT(id) DO NOTHING",
+          [accountId, JSON.stringify(freshAccount)],
+        );
+        const locked = await tx.query<{ data: WalletAccount }>(
+          "SELECT data FROM accounts WHERE id=$1 FOR UPDATE",
+          [accountId],
+        );
+        account = locked.rows[0]!.data;
+        const binding = await tx.query<{ data: { rootId: string } }>(
+          "SELECT data FROM root_bindings WHERE account_id=$1",
+          [accountId],
+        );
+        const rootId = binding.rows[0]?.data.rootId ?? null;
+        root = rootId ? await tx.get<RootIdentity>("roots", rootId) : null;
+        if (rootId && !root) throw new Error("ROOT_NOT_FOUND");
+        await tx.insert("sessions", {
+          id: hashCanonical(sessionToken),
+          accountId,
+          rootId,
+          expiresAt: new Date(now.getTime() + 8 * 3600000).toISOString(),
+        });
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "CHALLENGE_NOT_CONSUMABLE"
+      )
+        throw new HttpError(403, "INVALID_CHALLENGE");
+      throw error;
+    }
+    setCookie(c, "humanos_session", sessionToken, {
+      ...cookieOpts,
+      maxAge: 8 * 3600,
+    });
+    deleteCookie(c, "humanos_auth_challenge", { path: "/" });
+    return c.json({ account: account!, root, jawConfigured: true });
+  });
+  app.get("/api/auth/session", async (c) => {
+    const s = await session(c);
+    return c.json({
+      account: s ? await db.get<WalletAccount>("accounts", s.accountId) : null,
+      root: s?.rootId ? await db.get<RootIdentity>("roots", s.rootId) : null,
+      jawConfigured: !!config.siweVerifier,
+    });
+  });
+  app.post("/api/auth/logout", async (c) => {
+    const token = getCookie(c, "humanos_session");
+    if (token) await db.delete("sessions", hashCanonical(token));
+    deleteCookie(c, "humanos_session", { path: "/" });
+    return c.json({
+      account: null,
+      root: null,
+      jawConfigured: !!config.siweVerifier,
     });
   });
   app.post("/api/session/logout", async (c) => {
@@ -309,6 +503,7 @@ export function createApi(config: ApiConfig) {
   app.post("/api/missions", async (c) => {
     const s = await session(c);
     if (!s) throw new HttpError(401, "UNAUTHENTICATED");
+    if (!s.rootId) throw new HttpError(403, "ROOT_REQUIRED");
     const input = v.parse(CreateMissionRequestSchema, await c.req.json());
     const proposed = await requireService(config.models).proposeMission(input);
     const expiresAt = input.expiresAt ?? proposed.expiresAt;

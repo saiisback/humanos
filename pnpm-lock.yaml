@@ -113,6 +113,9 @@ importers:
       valibot:
         specifier: 1.5.0
         version: 1.5.0(typescript@5.8.3)
+      viem:
+        specifier: 2.56.8
+        version: 2.56.8(typescript@5.8.3)(zod@4.6.5)
     devDependencies:
       '@types/pg':
         specifier: 8.15.5
