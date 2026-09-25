@@ -11,21 +11,22 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
-    "@humanos/schemas": "workspace:*",
-    "@humanos/database": "workspace:*",
-    "@humanos/policy": "workspace:*",
-    "@humanos/world": "workspace:*",
-    "@humanos/models": "workspace:*",
-    "@humanos/workflows": "workspace:*",
-    "@humanos/tools": "workspace:*",
-    "hono": "4.13.8",
     "@hono/node-server": "1.19.15",
+    "@humanos/database": "workspace:*",
+    "@humanos/ens": "workspace:*",
+    "@humanos/models": "workspace:*",
+    "@humanos/policy": "workspace:*",
+    "@humanos/schemas": "workspace:*",
+    "@humanos/tools": "workspace:*",
+    "@humanos/workflows": "workspace:*",
+    "@humanos/world": "workspace:*",
+    "hono": "4.13.8",
+    "playwright-core": "1.63.0",
     "valibot": "1.5.0",
-    "viem": "2.56.8",
-    "@humanos/ens": "workspace:*"
+    "viem": "2.56.8"
   },
   "devDependencies": {
-    "tsx": "4.20.3",
-    "@types/pg": "8.15.5"
+    "@types/pg": "8.15.5",
+    "tsx": "4.20.3"
   }
 }

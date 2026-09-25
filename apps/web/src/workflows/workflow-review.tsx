@@ -1,0 +1,39 @@
+import React from "react";
+import type { JsonValue, WorkflowVersion } from "@humanos/schemas";
+export const blockLabel: Record<string, string> = { "research.web": "Research trusted sources", "content.generate": "Write with DeepSeek", "content.transform": "Refine the content", "human.confirm": "Your final confirmation", "connector.call": "Send through your connected service", "human.input": "A detail is needed", "browser.navigate": "Open the approved website", "browser.extract": "Read page details", "browser.fill": "Prepare the form", "browser.submit": "Submit the reviewed form" };
+export function WorkflowReview({ version, busy, onRun }: { version: WorkflowVersion; busy: boolean; onRun(): void }) {
+  return <section className="workflow-card" aria-label="Workflow review">
+    <span className="eyebrow">Jev · deterministic blocks</span>
+    <h2>Plan ready for review</h2>
+    <ol className="workflow-steps">{version.graph.nodes.map(node => <li key={node.id}><span>{blockLabel[node.type] ?? node.type.replaceAll(".", " ")}</span></li>)}</ol>
+    {version.requiredCapabilities.length > 0 && <p className="fine">Permissions: {version.requiredCapabilities.join(" · ")}</p>}
+    <p className="fine">No external action has been taken. Sending or submitting will pause for your exact final confirmation.</p>
+    <button onClick={onRun} disabled={busy}>{version.activatedAt ? "Run again" : "Review & run"}</button>
+  </section>;
+}
+const record = (value: JsonValue | undefined): Record<string, JsonValue> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : null;
+/** Renders the server-prepared material exactly; unknown shapes fall back to the full JSON. */
+export function ConfirmationPreview({ value }: { value: JsonValue }) {
+  const prepared = record(value), payload = record(prepared?.payload), binding = record(prepared?.binding);
+  const args = record(payload?.arguments) ?? record(payload?.fields) ?? null;
+  if (!prepared || typeof prepared.destination !== "string" || !payload) return <OutputView value={value} />;
+  return <dl className="workflow-exact">
+    <dt>Destination</dt><dd className="hash">{prepared.destination}</dd>
+    {typeof binding?.sender === "string" && <><dt>Sent as</dt><dd className="hash">{binding.sender}</dd></>}
+    {args ? Object.entries(args).map(([key, entry]) => <React.Fragment key={key}><dt>{key}</dt><dd className="workflow-output">{typeof entry === "string" ? entry : JSON.stringify(entry)}</dd></React.Fragment>)
+      : <><dt>Payload</dt><dd><OutputView value={payload} /></dd></>}
+  </dl>;
+}
+export function OutputView({ value }: { value: JsonValue }) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (typeof value.text === "string") return <div className="workflow-output">{value.text}</div>;
+    if (typeof value.body === "string") return <div className="workflow-output">{typeof value.subject === "string" && <h3>{value.subject}</h3>}{value.body}</div>;
+    if (Array.isArray(value.sources)) return <ul className="workflow-sources">{value.sources.map((source, index) => {
+      if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+      const url = typeof source.url === "string" && /^https?:\/\//.test(source.url) ? source.url : null;
+      return <li key={index}>{url ? <a href={url} target="_blank" rel="noopener noreferrer">{String(source.title ?? url)}</a> : String(source.title ?? "Source")}<p className="fine">{String(source.excerpt ?? "")}</p></li>;
+    })}</ul>;
+  }
+  return <pre className="workflow-output">{JSON.stringify(value, null, 2)}</pre>;
+}

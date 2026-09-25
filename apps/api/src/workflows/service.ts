@@ -3,6 +3,7 @@ import * as v from "valibot";
 import { type Database, type WorkflowStore } from "@humanos/database";
 import {
   assembleWorkflow,
+  AssemblyReviewError,
   validateWorkflowGraph,
   stepIdempotencyKey,
   transitionRun,
@@ -38,6 +39,8 @@ export interface WorkflowServiceDependencies {
   registry: BlockRegistry;
   selector: WorkflowSelector;
   capabilityForNode?(node: WorkflowNode): Capability | null;
+  /** Deterministic, non-authoritative description of how a goal was classified. */
+  describeGoal?(goal: string): Record<string, JsonValue>;
   assemblyInput(
     goal: string,
     actor: WorkflowActor,
@@ -197,16 +200,36 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       if (previous.workflow.status === "ARCHIVED")
         throw new Error("WORKFLOW_ARCHIVED");
       const latest = previous.versions.at(-1)!;
+      const described = deps.describeGoal?.(latest.goal) ?? {};
       const config = await deps.assemblyInput(latest.goal, actor);
-      const result = await assembleWorkflow(
-        { ...config, goal: latest.goal, draft: { nodes: [] } },
-        deps.selector,
-        registry,
-      );
+      let result;
+      try {
+        result = await assembleWorkflow(
+          { ...config, goal: latest.goal, draft: { nodes: [] } },
+          deps.selector,
+          registry,
+        );
+      } catch (error) {
+        // Keep the stop visible and actionable: an unexecutable draft version records why.
+        const outcome = error instanceof AssemblyReviewError
+          ? { outcome: "REVIEW_REQUIRED", ...structuredClone(error.diagnostics) as unknown as Record<string, JsonValue> }
+          : error instanceof Error && error.message === "NO_CANDIDATES" ? { outcome: "NO_CANDIDATES" } : null;
+        if (outcome) {
+          const graph = { nodes: [] };
+          await store.insertVersion({
+            ...latest, id: randomUUID(), version: latest.version + 1,
+            graph, graphHash: hashCanonical(graph), requiredCapabilities: [], connectorRefs: [],
+            normalizedIntent: { ...described, assembly: outcome },
+            activatedAt: null, createdAt: new Date().toISOString(),
+          });
+        }
+        throw error;
+      }
       const version: WorkflowVersion = {
         ...latest,
         id: randomUUID(),
         version: latest.version + 1,
+        normalizedIntent: { ...described, assembly: { outcome: "ASSEMBLED" } },
         graph: result.graph,
         graphHash: hashCanonical(result.graph),
         requiredCapabilities: [
@@ -233,6 +256,26 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         createdAt: new Date().toISOString(),
       };
       await store.insertVersion(version);
+      return detail(actor, id);
+    },
+    /** Save an edited request as a new, unassembled draft version. Activated versions are untouched. */
+    async refine(
+      actor: WorkflowActor,
+      id: string,
+      goal: string,
+    ): Promise<WorkflowDetailResponse> {
+      v.parse(CreateWorkflowRequestSchema, { goal });
+      const previous = await detail(actor, id);
+      if (previous.workflow.status === "ARCHIVED") throw new Error("WORKFLOW_ARCHIVED");
+      const latest = previous.versions.at(-1)!;
+      const graph = { nodes: [] };
+      await store.insertVersion({
+        ...latest, id: randomUUID(), version: latest.version + 1, goal,
+        normalizedIntent: {}, graph, graphHash: hashCanonical(graph),
+        requiredCapabilities: [], connectorRefs: [], browserFallbackAllowed: false,
+        assembler: { modelId: "jev-1.13", modelVersion: "1.13", decisionHash: hashCanonical([]) },
+        activatedAt: null, createdAt: new Date().toISOString(),
+      });
       return detail(actor, id);
     },
     async activate(
@@ -284,6 +327,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         missionId: workflow.missionId,
         triggerKind: "manual",
         triggerOccurrenceId: null,
+        executionSessionId: actor.sessionId ?? null,
         inputSnapshot: structuredClone(input),
         inputHash,
         status: "QUEUED",

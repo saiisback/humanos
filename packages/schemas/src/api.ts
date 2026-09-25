@@ -155,6 +155,11 @@ export const UpdateWorkflowDraftRequestSchema = v.strictObject({
   trigger: v.optional(WorkflowTriggerSchema),
 });
 export type UpdateWorkflowDraftRequest = v.InferOutput<typeof UpdateWorkflowDraftRequestSchema>;
+/** Edited request text only; it is re-classified and re-assembled, never executed directly. */
+export const RefineWorkflowRequestSchema = v.strictObject({
+  goal: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(10000)),
+});
+export type RefineWorkflowRequest = v.InferOutput<typeof RefineWorkflowRequestSchema>;
 export const AssembleWorkflowRequestSchema = v.strictObject({});
 export type AssembleWorkflowRequest = v.InferOutput<typeof AssembleWorkflowRequestSchema>;
 export const ActivateWorkflowRequestSchema = v.strictObject({
@@ -207,5 +212,26 @@ export const WorkflowScheduleListResponseSchema = v.strictObject({
   schedules: v.array(WorkflowScheduleSchema),
 });
 export type WorkflowScheduleListResponse = v.InferOutput<typeof WorkflowScheduleListResponseSchema>;
+/** Account-scoped capability status. `connected` means the server can act for this
+ * account through a real adapter; it is not evidence that any provider call succeeded. */
+export const WorkflowConnectionStatusSchema = v.picklist(["connected", "setup_required", "not_connected", "disabled"]);
+export type WorkflowConnectionStatus = v.InferOutput<typeof WorkflowConnectionStatusSchema>;
+export const WorkflowConnectionSchema = v.strictObject({
+  id: v.pipe(v.string(), v.regex(/^[a-z][a-z0-9._-]{0,63}$/)),
+  label: v.pipe(v.string(), v.minLength(1), v.maxLength(128)),
+  kind: v.picklist(["model", "connector", "browser"]),
+  capabilities: v.pipe(v.array(CapabilitySchema), v.maxLength(16)),
+  status: WorkflowConnectionStatusSchema,
+  detail: v.pipe(v.string(), v.minLength(1), v.maxLength(1000)),
+  setup: v.nullable(v.pipe(v.string(), v.minLength(1), v.maxLength(1000))),
+  /** Public identity the user must recognize (e.g. email sender); never a credential. */
+  publicIdentity: v.nullable(v.pipe(v.string(), v.minLength(1), v.maxLength(256))),
+});
+export type WorkflowConnection = v.InferOutput<typeof WorkflowConnectionSchema>;
+export const WorkflowConnectionsResponseSchema = v.strictObject({
+  accountId: IdSchema,
+  connections: v.pipe(v.array(WorkflowConnectionSchema), v.maxLength(32)),
+});
+export type WorkflowConnectionsResponse = v.InferOutput<typeof WorkflowConnectionsResponseSchema>;
 export const WorkflowConfirmationResponseSchema = v.strictObject({ confirmation: RunConfirmationSchema });
 export type WorkflowConfirmationResponse = v.InferOutput<typeof WorkflowConfirmationResponseSchema>;

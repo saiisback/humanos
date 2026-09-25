@@ -50,6 +50,7 @@ import {
   type ExecutionDependencies,
 } from "./services/execute-sensitive-action.js";
 import { isSiweVerificationError, type SiweVerifier } from "./services/siwe.js";
+import { createWorkflowRoutes, type WorkflowApi } from "./workflows/routes.js";
 import {
   createPermissionService,
   PermissionError,
@@ -78,6 +79,7 @@ export interface ApiConfig {
   updateEnsReceipt?: ExecutionDependencies["updateEnsReceipt"];
   flueUrl?: string;
   internalSecret?: string;
+  workflows?: WorkflowApi;
 }
 type Env = { Variables: { session: SessionRecord; root: RootIdentity } };
 class HttpError extends Error {
@@ -1329,5 +1331,11 @@ export function createApi(config: ApiConfig) {
     });
     return c.json(await detail(m));
   });
+  if (config.workflows) app.route("/api", createWorkflowRoutes(config.workflows, async c => {
+    const s = await session(c);
+    if (!s?.accountId || !(await db.get<WalletAccount>("accounts", s.accountId))) throw new HttpError(401, "UNAUTHENTICATED");
+    if (s.rootId) await linkedSession(c);
+    return { accountId: s.accountId, rootId: s.rootId, sessionId: s.id };
+  }));
   return app;
 }

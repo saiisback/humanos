@@ -9,7 +9,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, body?: unknown): Promise<T> {
+export async function api<T>(path: string, body?: unknown, options?: { idempotencyKey?: string }): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);
   try {
@@ -20,7 +20,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
         ? {}
         : {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...(options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}) },
             body: JSON.stringify(body),
           }),
     });

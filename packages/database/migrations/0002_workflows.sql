@@ -52,3 +52,8 @@ CREATE TABLE IF NOT EXISTS workflow_values (
   id text PRIMARY KEY, run_id text NOT NULL REFERENCES workflow_runs(id),
   value_hash text NOT NULL, data jsonb NOT NULL
 );
+CREATE TABLE IF NOT EXISTS workflow_dispatch_claims (
+  step_id text PRIMARY KEY REFERENCES workflow_steps(id),
+  confirmation_id text NOT NULL REFERENCES workflow_confirmations(id),
+  claimed_at timestamptz NOT NULL
+);

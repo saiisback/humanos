@@ -158,6 +158,7 @@ export const WorkflowRunSchema = v.strictObject({
   missionId: v.nullable(IdSchema),
   triggerKind: v.picklist(["manual", "once", "recurring", "api"]),
   triggerOccurrenceId: v.nullable(IdSchema),
+  executionSessionId: v.optional(v.nullable(IdSchema)),
   inputSnapshot: BoundedPayloadSchema,
   inputHash: HexSchema,
   status: RunStatusSchema,
@@ -272,6 +273,7 @@ export const WorkflowScheduleSchema = v.strictObject({
   id: IdSchema,
   workflowId: IdSchema,
   workflowVersionId: IdSchema,
+  executionSessionId: v.optional(v.nullable(IdSchema)),
   definition: v.variant("kind", [
     v.strictObject({ kind: v.literal("once"), fireAt: TimestampSchema, timezone: ShortTextSchema }),
     v.strictObject({ kind: v.literal("recurring"), expression: ShortTextSchema, timezone: ShortTextSchema }),

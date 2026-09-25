@@ -643,11 +643,25 @@ export class WorkflowStore {
         );
     });
   }
+  async claimConfirmedDispatch(input: WorkflowLease & { confirmationId: string; stepId: string; accountId: string; payloadHash: string; idempotencyKey: string }): Promise<boolean> {
+    v.parse(HexSchema, input.payloadHash);
+    v.parse(HexSchema, input.idempotencyKey);
+    return this.db.transaction(async tx => {
+      const run = (await tx.query<{ data: WorkflowRun }>("SELECT data FROM workflow_runs WHERE id=$1 FOR UPDATE", [input.runId])).rows[0]?.data;
+      if (!run || run.status !== "RUNNING" || run.revision !== input.revision || run.leaseOwner !== input.workerId || !input.workerId || !run.leaseExpiresAt || Date.parse(run.leaseExpiresAt) <= input.now.getTime()) return false;
+      const confirmation = (await tx.query<{ data: RunConfirmation }>("SELECT data FROM workflow_confirmations WHERE id=$1", [input.confirmationId])).rows[0]?.data;
+      const step = (await tx.query<{ data: StepRun }>("SELECT data FROM workflow_steps WHERE id=$1", [input.stepId])).rows[0]?.data;
+      if (!confirmation || confirmation.status !== "CONSUMED" || confirmation.runId !== input.runId || confirmation.stepRunId !== input.stepId || confirmation.actorAccountId !== input.accountId || confirmation.payloadHash !== input.payloadHash || Date.parse(confirmation.expiresAt) <= input.now.getTime() || !step || step.runId !== input.runId || step.status !== "RUNNING" || step.idempotencyKey !== input.idempotencyKey) return false;
+      const result = await tx.query("INSERT INTO workflow_dispatch_claims(step_id,confirmation_id,claimed_at) VALUES($1,$2,$3) ON CONFLICT(step_id) DO NOTHING", [input.stepId, input.confirmationId, input.now.toISOString()]);
+      return result.rowCount === 1;
+    });
+  }
   async consumeConfirmation(
     id: string,
     expectedPayloadHash: string,
     now: Date,
     actorAccountId: string,
+    resume = false,
   ): Promise<RunConfirmation> {
     v.parse(HexSchema, expectedPayloadHash);
     return this.db.transaction(async (tx) => {
@@ -694,6 +708,14 @@ export class WorkflowStore {
         id,
         json(next),
       ]);
+      if (resume) {
+        const resumed: WorkflowRun = { ...run, status: "QUEUED", revision: run.revision + 1, pauseReason: null, nextResumeAt: null, leaseOwner: null, leaseExpiresAt: null };
+        const sequence = Number((await tx.query<{ sequence: string }>("SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM workflow_events WHERE run_id=$1", [run.id])).rows[0]!.sequence);
+        const event: WorkflowEvent = { id: `${id}:approved`, runId: run.id, stepRunId: current.stepRunId, sequence, type: "run.confirmed", data: { confirmationId: id, payloadHash: expectedPayloadHash }, createdAt: now.toISOString() };
+        this.assertRunChange(run, resumed, event);
+        await this.writeRun(tx, resumed);
+        await this.appendEvent(tx, event);
+      }
       return next;
     });
   }
@@ -711,6 +733,23 @@ export class WorkflowStore {
       ],
     );
     if (saved.rowCount !== 1) throw new Error("SCHEDULE_MISMATCH");
+  }
+  /** Guarded schedule advancement: compares the entire snapshot, not a possibly colliding timestamp. */
+  async compareAndSwapSchedule(expected: WorkflowSchedule, next: WorkflowSchedule): Promise<void> {
+    v.parse(WorkflowScheduleSchema, next);
+    await this.db.transaction(async (tx) => {
+      const current = (await tx.query<{ data: WorkflowSchedule }>(
+        "SELECT data FROM workflow_schedules WHERE id=$1 FOR UPDATE", [expected.id],
+      )).rows[0]?.data;
+      if (!current || hashCanonical(current) !== hashCanonical(expected) ||
+          next.id !== current.id || next.workflowId !== current.workflowId ||
+          next.workflowVersionId !== current.workflowVersionId ||
+          next.executionSessionId !== current.executionSessionId)
+        throw new Error("SCHEDULE_CONFLICT");
+      await tx.query("UPDATE workflow_schedules SET status=$2,next_fire_at=$3,data=$4 WHERE id=$1", [
+        next.id, next.status, next.nextFireAt, json(next),
+      ]);
+    });
   }
   async recordReceipt(receipt: WorkflowReceipt) {
     v.parse(WorkflowReceiptSchema, receipt);
@@ -735,6 +774,7 @@ export class WorkflowStore {
       if (
         !schedule ||
         schedule.status !== "ACTIVE" ||
+        schedule.nextFireAt !== occurrenceAt ||
         schedule.workflowId !== run.workflowId ||
         schedule.workflowVersionId !== run.workflowVersionId
       )

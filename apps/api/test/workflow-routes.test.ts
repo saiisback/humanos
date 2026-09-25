@@ -1,0 +1,53 @@
+import { beforeAll, afterAll, it, expect } from "vitest";
+import { Database, WorkflowStore } from "@humanos/database";
+import { createDefaultCatalog } from "@humanos/workflows";
+import { hashCanonical } from "@humanos/schemas";
+import { createApi } from "../src/app.js";
+import { createWorkflowService } from "../src/workflows/service.js";
+const schema = `test_workflow_routes_${Date.now()}`;
+const accountId = "11155111:0x1111111111111111111111111111111111111111";
+const db = new Database(process.env.TEST_DATABASE_URL ?? "postgresql://saikarthik@127.0.0.1:55432/humanos", { schema });
+const store = new WorkflowStore(db);
+const service = createWorkflowService({ db, store, registry: createDefaultCatalog(), selector: { select: async () => { throw new Error("not needed"); } }, assemblyInput: async () => ({ allowedCapabilities: [], inputs: {} }) });
+const app = createApi({ db, origin: "http://localhost:5173", workflows: { service, store } });
+beforeAll(async () => {
+  await db.migrate();
+  await db.insert("accounts", { id: accountId, address: "0x1111111111111111111111111111111111111111", chainId: 11155111, createdAt: new Date().toISOString() });
+  await db.insert("sessions", { id: hashCanonical("test-session"), accountId, rootId: null, expiresAt: new Date(Date.now() + 60000).toISOString() });
+});
+afterAll(async () => { await db.query(`DROP SCHEMA "${schema}" CASCADE`); await db.close(); });
+it("requires an authenticated account, not World verification, and rejects cross-origin mutation", async () => {
+  expect((await app.request("/api/workflows")).status).toBe(401);
+  const headers = { cookie: "humanos_session=test-session", "content-type": "application/json", origin: "http://localhost:5173" };
+  const created = await app.request("/api/workflows", { method: "POST", headers, body: JSON.stringify({ goal: "Write a greeting" }) });
+  expect(created.status).toBe(201);
+  const value = await created.json();
+  expect(value.workflow.accountId).toBe(accountId);
+  expect(value.workflow.rootId).toBeNull();
+  expect((await app.request("/api/workflows", { method: "POST", headers: { ...headers, origin: "https://attacker.example" }, body: JSON.stringify({ goal: "bad" }) })).status).toBe(403);
+  const read = await app.request(`/api/workflows/${value.workflow.id}`, { headers });
+  expect(read.status).toBe(200);
+});
+it("saves an edited request as a new unexecuted draft version, same-origin only", async () => {
+  const headers = { cookie: "humanos_session=test-session", "content-type": "application/json", origin: "http://localhost:5173" };
+  const created = await (await app.request("/api/workflows", { method: "POST", headers, body: JSON.stringify({ goal: "Do the thing" }) })).json();
+  const id = created.workflow.id;
+  expect((await app.request(`/api/workflows/${id}/refine`, { method: "POST", headers: { ...headers, origin: "https://attacker.example" }, body: JSON.stringify({ goal: "Other" }) })).status).toBe(403);
+  expect((await app.request(`/api/workflows/${id}/refine`, { method: "POST", headers, body: JSON.stringify({ goal: "   " }) })).status).not.toBe(200);
+  expect((await app.request(`/api/workflows/${id}/refine`, { method: "POST", headers, body: JSON.stringify({ goal: "Draft a welcome note", graph: { nodes: [] } }) })).status).not.toBe(200);
+  const refined = await app.request(`/api/workflows/${id}/refine`, { method: "POST", headers, body: JSON.stringify({ goal: "Draft a welcome note" }) });
+  expect(refined.status).toBe(200);
+  const detail = await refined.json();
+  expect(detail.versions.at(-1)).toMatchObject({ goal: "Draft a welcome note", activatedAt: null, graph: { nodes: [] } });
+});
+it("scopes connection status to the authenticated account and never assumes connected without a provider", async () => {
+  const headers = { cookie: "humanos_session=test-session" };
+  expect((await app.request("/api/workflow-connections", { headers })).status).toBe(503);
+  const seen: string[] = [];
+  const withStatus = createApi({ db, origin: "http://localhost:5173", workflows: { service, store, connections: async actor => { seen.push(actor.accountId); return { accountId: actor.accountId, connections: [] }; } } });
+  expect((await withStatus.request("/api/workflow-connections")).status).toBe(401);
+  const response = await withStatus.request("/api/workflow-connections", { headers });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ accountId, connections: [] });
+  expect(seen).toEqual([accountId]);
+});

@@ -9,6 +9,8 @@ import type {
 export interface WorkflowActor {
   accountId: string;
   rootId: string | null;
+  /** Server-derived session, never supplied by a workflow request body. */
+  sessionId?: string;
 }
 export interface StepExecutionContext {
   actor: WorkflowActor;

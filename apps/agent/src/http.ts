@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AgentConfig } from "./config.js";
+import { assembleSavedWorkflow } from "./workflow.js";
+import { bodyLimit } from "hono/body-limit";
 export function createProtectedApp(
   config: AgentConfig,
   router: Hono,
@@ -21,6 +23,14 @@ export function createProtectedApp(
     }),
   );
   app.get("/health", (c) => c.json({ status: "ok" }));
+  app.use("/internal/workflows/*", bodyLimit({ maxSize: 1000 }));
+  app.post("/internal/workflows/:id/assemble", async c => {
+    if (!config.internalSecret || c.req.header("authorization") !== `Bearer ${config.internalSecret}` || !c.req.header("cookie")) return c.json({ error: { code: "UNAUTHENTICATED" } }, 401);
+    const body: unknown = await c.req.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length) return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
+    try { return c.json(await assembleSavedWorkflow(c.req.param("id"), c.req.header("cookie")!, config, transport)); }
+    catch (error) { return c.json({ error: { code: error instanceof Error ? error.message : "WORKFLOW_ASSEMBLY_UNAVAILABLE" } }, 503); }
+  });
   app.use("/agents/humanos/*", async (c, next) => {
     const cookie = c.req.header("cookie");
     if (!cookie)

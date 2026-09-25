@@ -4,6 +4,7 @@ import type {
   Readiness,
   RootIdentity,
   WalletAccount,
+  Workflow,
 } from "@humanos/schemas";
 
 const label = (value: string) =>
@@ -24,6 +25,9 @@ export function AppShell({
   busy,
   error,
   onRetry,
+  workflows,
+  onSelectWorkflow,
+  connectionsPanel,
 }: {
   children: ReactNode;
   composer: ReactNode;
@@ -38,6 +42,10 @@ export function AppShell({
   busy: boolean;
   error: string;
   onRetry: () => void;
+  workflows?: Workflow[];
+  onSelectWorkflow?: (id: string) => void;
+  /** Account-scoped workflow connection panel; replaces configuration-only readiness. */
+  connectionsPanel?: ReactNode;
 }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const [railOpen, setRailOpen] = useState(true);
@@ -63,7 +71,7 @@ export function AppShell({
   }, [sheet]);
   const missionList = (
     <>
-      <h2>Missions</h2>
+      <h2>{workflows ? "Workflows" : "Missions"}</h2>
       <button
         className="rail-new"
         onClick={() => {
@@ -74,7 +82,7 @@ export function AppShell({
         + New task
       </button>
       <nav aria-label="Missions">
-        {missions.length ? (
+        {workflows ? (workflows.length ? workflows.map(workflow => <button key={workflow.id} className="mission-nav" aria-current={selectedId === workflow.id ? "page" : undefined} onClick={() => { onSelectWorkflow?.(workflow.id); closeSheet(); }}><strong>{workflow.name}</strong><small>{label(workflow.status)}</small></button>) : <p className="fine">Your saved workflows will appear here.</p>) : missions.length ? (
           missions.map((mission) => (
             <button
               key={mission.id}
@@ -111,13 +119,16 @@ export function AppShell({
           : "Not verified"}
       </p>
       {account && (
+        <>
+        <p><a href="/?identity=1">Manage World ID and ENS agents</a></p>
         <button className="secondary" disabled={busy} onClick={onSignOut}>
           Sign out
         </button>
+        </>
       )}
     </>
   );
-  const connections = (
+  const connections = connectionsPanel ?? (
     <>
       <h2>Connections</h2>
       <p className="fine">

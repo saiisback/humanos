@@ -8,6 +8,7 @@ import {
   type StepAttempt,
   type StepRun,
   type WorkflowReceipt,
+  type WorkflowSchedule,
 } from "@humanos/schemas";
 import { Database, WorkflowStore } from "../src/index.js";
 
@@ -709,6 +710,8 @@ it("binds scheduled occurrences to the schedule's workflow and skips overlap", a
       run("occurrence-duplicate", workflow.id),
     ),
   ).toBe(false);
+  const schedule = (await store.get<WorkflowSchedule>("workflow_schedules", "schedule"))!;
+  await store.compareAndSwapSchedule(schedule, { ...schedule, nextFireAt: "2026-09-26T01:00:00.000Z", lastFireAt: stamp });
   expect(
     await store.createOccurrence(
       "schedule",
@@ -717,6 +720,29 @@ it("binds scheduled occurrences to the schedule's workflow and skips overlap", a
     ),
   ).toBe(false);
   expect(await store.get("workflow_runs", "occurrence-overlap")).toBeNull();
+});
+it("atomically resumes a confirmed run and rejects approval replay", async () => {
+  const previous = (await store.get<RunConfirmation>("workflow_confirmations", "confirmation"))!;
+  const confirmation = { ...previous, id: "resume-confirmation", status: "PENDING" as const, consumedAt: null };
+  await store.insertConfirmation(confirmation);
+  await store.consumeConfirmation(confirmation.id, confirmation.payloadHash, new Date(stamp), account.id, true);
+  expect(await store.get<WorkflowRun>("workflow_runs", confirmation.runId)).toMatchObject({ status: "QUEUED", pauseReason: null, leaseOwner: null });
+  await expect(store.consumeConfirmation(confirmation.id, confirmation.payloadHash, new Date(stamp), account.id, true)).rejects.toThrow();
+  expect((await store.list<any>("workflow_events")).filter(e => e.runId === confirmation.runId && e.type === "run.confirmed")).toHaveLength(1);
+});
+it("claims a confirmed dispatch once under the current live run lease", async () => {
+  const original = (await store.get<RunConfirmation>("workflow_confirmations", "resume-confirmation"))!;
+  const previous = (await store.get<WorkflowRun>("workflow_runs", original.runId))!;
+  const executing = { ...previous, status: "RUNNING" as const, revision: previous.revision + 1, leaseOwner: "dispatch-worker", leaseExpiresAt: "2026-09-26T00:01:00.000Z" };
+  await db.query("UPDATE workflow_runs SET status=$2,revision=$3,data=$4 WHERE id=$1", [executing.id, executing.status, executing.revision, JSON.stringify(executing)]);
+  const step = (await store.get<StepRun>("workflow_steps", original.stepRunId))!;
+  await db.query("UPDATE workflow_steps SET data=$2 WHERE id=$1", [step.id, JSON.stringify({ ...step, status: "RUNNING" })]);
+  const input = { runId: executing.id, revision: executing.revision, workerId: "dispatch-worker", now: new Date(stamp), confirmationId: original.id, stepId: step.id, accountId: account.id, payloadHash: original.payloadHash, idempotencyKey: step.idempotencyKey };
+  expect(await store.claimConfirmedDispatch({ ...input, accountId: "other" })).toBe(false);
+  expect(await store.claimConfirmedDispatch({ ...input, revision: 0 })).toBe(false);
+  expect(await store.claimConfirmedDispatch({ ...input, now: new Date("2026-09-26T00:02:00.000Z") })).toBe(false);
+  const results = await Promise.all([store.claimConfirmedDispatch(input), store.claimConfirmedDispatch(input)]);
+  expect(results.sort()).toEqual([false, true]);
 });
 it("does not consume a fresh confirmation after its run was cancelled", async () => {
   const previous = await store.get<RunConfirmation>(
@@ -738,7 +764,7 @@ it("does not consume a fresh confirmation after its run was cancelled", async ()
       id: "cancel-event",
       runId: current!.id,
       stepRunId: null,
-      sequence: 2,
+      sequence: 3,
       type: "cancelled",
       data: {},
       createdAt: stamp,

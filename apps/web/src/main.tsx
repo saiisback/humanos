@@ -19,6 +19,7 @@ import { buildTranscript } from "./chat/mission-flow";
 import { Transcript, type TranscriptActions } from "./chat/transcript";
 import { WorldVerification } from "./identity/world-verification";
 import { AppShell } from "./shell/app-shell";
+import { WorkflowWorkspace } from "./workflows/workspace";
 import "@fontsource/dm-sans/400.css";
 import "@fontsource/dm-sans/500.css";
 import "@fontsource/dm-sans/600.css";
@@ -390,4 +391,5 @@ function App() {
     </>
   );
 }
-mountApp(document.getElementById("root")!, <App />, import.meta.hot?.data ?? {});
+const legacyIdentity = new URLSearchParams(location.search).has("identity") || new URLSearchParams(location.search).has("mission") || import.meta.env.MODE === "e2e";
+mountApp(document.getElementById("root")!, legacyIdentity ? <App /> : <WorkflowWorkspace />, import.meta.hot?.data ?? {});

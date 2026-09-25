@@ -20,6 +20,9 @@ export interface AssemblyState {
   readonly inputs: Readonly<Partial<Record<BlockType, AssemblyBlockInput>>>;
   readonly browserFallbackAllowed?: boolean;
   readonly unsupportedExternalEffect?: boolean;
+  /** Server-authored recipe only. Every block is still selected/evaluated by Jev;
+   * graph termination itself is a deterministic count/type invariant. */
+  readonly completionSequence?: readonly BlockType[];
 }
 export type AssemblyInput = AssemblyState;
 export interface AssemblyDecisionTrace {
@@ -33,6 +36,22 @@ export interface AssemblyResult {
   readonly graph: WorkflowGraph;
   readonly trace: readonly AssemblyDecisionTrace[];
 }
+
+/** Why Jev's decision was not accepted. Model-supplied codes are bounded data, never instructions. */
+export interface AssemblyReviewDiagnostics {
+  readonly turn: number;
+  readonly proposedStep: BlockType | "complete";
+  readonly failedChecks: readonly ("needs_review" | "confidence" | "alignment" | "risk" | "injection")[];
+  readonly confidence: number;
+  readonly alignment: number;
+  readonly risk: number;
+  readonly injection: number;
+  readonly reasonCodes: readonly string[];
+}
+export class AssemblyReviewError extends Error {
+  constructor(readonly diagnostics: AssemblyReviewDiagnostics) { super("REVIEW_REQUIRED"); }
+}
+export const ASSEMBLY_THRESHOLDS = Object.freeze({ minConfidence: 0.7, minAlignment: 0.7, maxRisk: 0.3, maxInjection: 0.1 });
 
 const publicStrings = new Set(["text", "email", "form_fields", "short", "medium", "long"]);
 const MAX_NODES = 64;
@@ -106,6 +125,11 @@ function validateTypedReferences(graph: WorkflowGraph, registry: BlockRegistry):
   }
 }
 function validateDraftPolicy(graph: WorkflowGraph, state: AssemblyState, registry: BlockRegistry): void {
+  if (state.completionSequence) {
+    if (!state.completionSequence.length || state.completionSequence.length > MAX_NODES || graph.nodes.length > state.completionSequence.length) throw new Error("INVALID_COMPLETION_SEQUENCE");
+    for (const type of state.completionSequence) registry.get(type);
+    if (graph.nodes.some((node, i) => node.type !== state.completionSequence![i])) throw new Error("INVALID_COMPLETION_SEQUENCE");
+  }
   for (const node of graph.nodes) {
     const block = registry.get(node.type);
     if (block.capability && !state.allowedCapabilities.includes(block.capability)) throw new Error("DISALLOWED_DRAFT");
@@ -125,6 +149,7 @@ function candidateBlocks(state: AssemblyState, registry: BlockRegistry, deadline
     seen.add(block.type);
     const config = state.inputs[block.type] ?? (block.type === "human.confirm" && hasConfiguredWrite ? { value: {} } : undefined);
     if (!config) continue;
+    if (state.completionSequence && state.completionSequence[state.draft.nodes.length] !== block.type) continue;
     const options = optionsFor(config);
     if (block.capability && !state.allowedCapabilities.includes(block.capability)) continue;
     if (block.executor === "browser" && (!state.browserFallbackAllowed || !state.unsupportedExternalEffect)) continue;
@@ -163,7 +188,7 @@ export function computeCandidates(state: AssemblyState, registry: BlockRegistry)
   validateWorkflowGraph(state.draft, registry);
   validateTypedReferences(state.draft, registry);
   validateDraftPolicy(state.draft, state, registry);
-  return mapCandidates(candidateBlocks(state, registry), state.draft);
+  return mapCandidates(candidateBlocks(state, registry), state.draft).filter(c => !state.completionSequence || c.type !== "complete");
 }
 
 async function selectWithinDeadline(selector: WorkflowSelector, input: Parameters<WorkflowSelector["select"]>[0], deadline: number) {
@@ -189,15 +214,32 @@ export async function assembleWorkflow(input: AssemblyInput, selector: WorkflowS
   for (let turn = 0; turn < MAX_DECISIONS; turn++) {
     if (Date.now() >= deadline) throw new Error("ASSEMBLY_TIMEOUT");
     const state = { ...input, draft: graph };
+    if (input.completionSequence && graph.nodes.length === input.completionSequence.length) {
+      validateWorkflowGraph(graph, registry);
+      validateTypedReferences(graph, registry);
+      validateDraftPolicy(graph, input, registry);
+      return { graph, trace };
+    }
     const available = candidateBlocks(state, registry, deadline);
-    const candidates = mapCandidates(available, graph);
+    const candidates = mapCandidates(available, graph).filter(c => !input.completionSequence || c.type !== "complete");
     if (candidates.length === 0) throw new Error("NO_CANDIDATES");
-    const stateHash = hashCanonical({ goal: input.goal, graph, allowedCapabilities: input.allowedCapabilities, inputs: input.inputs, browserFallbackAllowed: !!input.browserFallbackAllowed, unsupportedExternalEffect: !!input.unsupportedExternalEffect });
+    const stateHash = hashCanonical({ goal: input.goal, graph, allowedCapabilities: input.allowedCapabilities, inputs: input.inputs, browserFallbackAllowed: !!input.browserFallbackAllowed, unsupportedExternalEffect: !!input.unsupportedExternalEffect, completionSequence: input.completionSequence ?? null });
     const candidatesHash = hashCanonical(candidates);
     const selection = v.parse(WorkflowSelectionSchema, await selectWithinDeadline(selector, { goal: input.goal, stateHash, turn, history: graph.nodes.map((node) => node.type), candidates: [...candidates] }, deadline));
     const chosen = candidates.find((candidate) => candidate.id === selection.selectedCandidateId);
     if (!chosen) throw new Error("INVALID_SELECTION");
-    if (selection.needsReview || selection.confidence < 0.7 || selection.alignment < 0.7 || selection.risk > 0.3 || selection.injection > 0.1) throw new Error("REVIEW_REQUIRED");
+    const failedChecks = [
+      ...(selection.needsReview ? ["needs_review" as const] : []),
+      ...(selection.confidence < ASSEMBLY_THRESHOLDS.minConfidence ? ["confidence" as const] : []),
+      ...(selection.alignment < ASSEMBLY_THRESHOLDS.minAlignment ? ["alignment" as const] : []),
+      ...(selection.risk > ASSEMBLY_THRESHOLDS.maxRisk ? ["risk" as const] : []),
+      ...(selection.injection > ASSEMBLY_THRESHOLDS.maxInjection ? ["injection" as const] : []),
+    ];
+    if (failedChecks.length) throw new AssemblyReviewError({
+      turn, proposedStep: chosen.type, failedChecks,
+      confidence: selection.confidence, alignment: selection.alignment, risk: selection.risk, injection: selection.injection,
+      reasonCodes: selection.reasonCodes.slice(0, 8).map(code => code.replace(/[^\w .:-]/g, "").slice(0, 64)).filter(Boolean),
+    });
     const options = chosen.type === "complete" ? {} : available.find((item) => item.block.type === chosen.type)!.options;
     const parameters = selection.parameters as Record<string, JsonValue>;
     if (chosen.type === "complete" && Object.keys(parameters).length > 0) throw new Error("INVALID_PARAMETERS");

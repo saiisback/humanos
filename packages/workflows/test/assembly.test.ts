@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowSelection } from "@humanos/schemas";
 import type { AssemblyInput, WorkflowSelector } from "../src/index.js";
-import { assembleWorkflow, computeCandidates, createDefaultCatalog } from "../src/index.js";
+import { assembleWorkflow, computeCandidates, createDefaultCatalog, AssemblyReviewError, ASSEMBLY_THRESHOLDS } from "../src/index.js";
 
 const catalog = createDefaultCatalog();
 const base = () => ({
@@ -24,6 +24,14 @@ const scripted = (choices: readonly string[], overrides: Partial<WorkflowSelecti
 };
 
 describe("workflow assembly", () => {
+  it("ends an audited sequence deterministically after every block passes Jev without fabricating a completion decision", async () => {
+    const select = vi.fn(scripted(["content.generate"]).select);
+    const result = await assembleWorkflow({ ...base(), completionSequence: ["content.generate"] }, { select }, catalog);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(result.graph.nodes.map(n => n.type)).toEqual(["content.generate"]);
+    expect(result.trace.map(t => t.selectedType)).toEqual(["content.generate"]);
+    await expect(assembleWorkflow({ ...base(), completionSequence: ["content.generate"] }, scripted(["content.generate"], { injection: 0.5 }), catalog)).rejects.toThrow("REVIEW_REQUIRED");
+  });
   it("offers one deterministic candidate per available catalog type", () => {
     const input = base();
     const first = computeCandidates(input, catalog);
@@ -58,6 +66,16 @@ describe("workflow assembly", () => {
     const input = base();
     await expect(assembleWorkflow(input, scripted(["shell.exec"]), catalog)).rejects.toThrow("INVALID_SELECTION");
     expect(input.draft.nodes).toEqual([]);
+  });
+
+  it("explains a review stop with bounded diagnostics and unchanged thresholds", async () => {
+    const failure = await assembleWorkflow(base(), scripted(["research.web"], { confidence: 0.49, needsReview: true, reasonCodes: ["ambiguous_destination", "<img src=x onerror=alert(1)>"] }), catalog).catch(error => error);
+    expect(failure).toBeInstanceOf(AssemblyReviewError);
+    expect(failure.message).toBe("REVIEW_REQUIRED");
+    expect(failure.diagnostics).toMatchObject({ turn: 0, proposedStep: "research.web", failedChecks: ["needs_review", "confidence"], confidence: 0.49 });
+    expect(failure.diagnostics.reasonCodes[0]).toBe("ambiguous_destination");
+    expect(failure.diagnostics.reasonCodes.join(" ")).not.toMatch(/[<>=()]/);
+    expect(ASSEMBLY_THRESHOLDS).toEqual({ minConfidence: 0.7, minAlignment: 0.7, maxRisk: 0.3, maxInjection: 0.1 });
   });
 
   it("fails closed on a low confidence or flagged choice", async () => {

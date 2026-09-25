@@ -11,6 +11,7 @@ import {
 } from "@humanos/ens";
 import { createEnsReceiptPublisher } from "./ens-receipts.js";
 import { createSepoliaSiweVerifier } from "./services/siwe.js";
+import { createWorkflowRuntime } from "./workflows/runtime.js";
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL required");
 const db = new Database(databaseUrl);
@@ -82,6 +83,12 @@ if (
     ensAdapter: ens,
   });
 }
+const workflowRuntime = openCodeKey ? createWorkflowRuntime(db, process.env) : null;
+if (workflowRuntime) config.workflows = workflowRuntime;
+const shutdown = new AbortController();
+process.once("SIGTERM", () => shutdown.abort());
+process.once("SIGINT", () => shutdown.abort());
+if (workflowRuntime) void workflowRuntime.start(shutdown.signal).catch(() => console.error("Workflow worker stopped; persisted runs require recovery."));
 const app = createApi(config);
 serve({
   fetch: app.fetch,

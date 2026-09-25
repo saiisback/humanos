@@ -34,10 +34,29 @@ const input = {
     },
   ],
 };
+const evaluation = () => { const { selection, ...scores } = answer().answers; return scores; };
+const selection = (selected = "c0") => ({ model: "jev-1.13", answers: { selection: choice(selected) } });
 const config = (body: unknown) => ({
   apiKey: "secret",
   retries: 0,
-  fetch: vi.fn(async () => new Response(JSON.stringify(body))),
+  fetch: vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const request = JSON.parse(String(init?.body ?? "{}"));
+    if (request.questions && body && typeof body === "object" && "answers" in body) {
+      const raw = body as ReturnType<typeof answer>;
+      return new Response(JSON.stringify({ ...raw, answers: Object.fromEntries(Object.entries(raw.answers).filter(([key]) => key in request.questions)) }));
+    }
+    return new Response(JSON.stringify(body));
+  }),
+});
+it("evaluates the chosen candidate only after selection exists", async () => {
+  const settings = config(answer());
+  await createWorkflowSelector(settings).select(input);
+  expect(settings.fetch).toHaveBeenCalledTimes(2);
+  const first = JSON.parse(String(settings.fetch.mock.calls[0]![1]!.body));
+  const second = JSON.parse(String(settings.fetch.mock.calls[1]![1]!.body));
+  expect(Object.keys(first.questions)).toEqual(["selection"]);
+  expect(second.state.candidate).toEqual({ id: "c0", type: "content.generate" });
+  expect(second.questions.injection.criteria.false).toContain("ordinary user request");
 });
 it("parses SystemOne answers for an offered opaque candidate", async () => {
   const settings = config(answer());
@@ -54,10 +73,44 @@ it("parses SystemOne answers for an offered opaque candidate", async () => {
   expect(body.state.candidates).toEqual([{ id: "c0", type: "content.generate", parameters: [] }]);
   expect(body.model).toBe("jev-1.13");
 });
+it("describes risk as unsafe draft assembly rather than a future gated effect", async () => {
+  const settings = config(answer());
+  await createWorkflowSelector(settings).select({ ...input, history: ["human.confirm"], candidates: [{
+    id: "candidate_email", type: "connector.call", description: "Send a reviewed email", parameterOptions: {},
+  }] });
+  const call = settings.fetch.mock.calls[0] as unknown as [string, RequestInit];
+  const body = JSON.parse(String(call[1].body));
+  const evaluation = JSON.parse(String(settings.fetch.mock.calls[1]![1]!.body));
+  expect(evaluation.questions.risk.instructions).toContain("adding this block to the proposed graph");
+  expect(evaluation.questions.risk.instructions).toContain("does not execute");
+  expect(evaluation.questions.risk.instructions).toContain("gated future external effect");
+  expect(evaluation.questions.review.instructions).toContain("missing user choice");
+  expect(body.questions.selection.instructions).toContain("plan contains all necessary steps");
+  expect(body.state.history).toEqual(["human.confirm"]);
+});
+it("defines complete as ending graph assembly for user review, with uncertain coverage flagged", async () => {
+  const raw = answer("c1");
+  raw.answers.selection = choice("c1", ["c0", "c1"]);
+  raw.answers.review.noul = 0.9;
+  const settings = config(raw);
+  const result = await createWorkflowSelector(settings).select({ ...input, candidates: [input.candidates[0]!, {
+    id: "candidate_complete", type: "complete", description: "Finish", parameterOptions: {},
+  }] });
+  expect(result).toMatchObject({ selectedCandidateId: "candidate_complete", needsReview: true });
+  const call = settings.fetch.mock.calls[0] as unknown as [string, RequestInit];
+  const body = JSON.parse(String(call[1].body));
+  expect(body.questions.selection.criteria.c1).toContain("proposed workflow graph");
+  expect(body.questions.selection.criteria.c1).toContain("No steps have run");
+});
 it("rejects invented Jev candidates", async () => {
   await expect(
     createWorkflowSelector(config(answer("shell.exec"))).select(input),
   ).rejects.toThrow("Model integration unavailable");
+});
+it("rejects an over-complete first response rather than accepting unsolicited scores", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(answer())));
+  await expect(createWorkflowSelector({ apiKey: "secret", retries: 0, fetch: fetcher }).select(input)).rejects.toThrow("Model integration unavailable");
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 it("rejects two candidates of the same catalog type before a provider request", async () => {
   const settings = config(answer());
@@ -92,12 +145,12 @@ it("rejects non-enumerated parameter options before a provider call", async () =
 it("selects only offered parameter values using opaque option IDs", async () => {
   const fetcher = vi
     .fn()
-    .mockResolvedValueOnce(new Response(JSON.stringify(answer())))
+    .mockResolvedValueOnce(new Response(JSON.stringify(selection())))
     .mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           model: "jev-1.13",
-          answers: { p0: choice("o1", ["o0", "o1"]) },
+          answers: { ...evaluation(), p0: choice("o1", ["o0", "o1"]) },
         }),
       ),
     );
@@ -114,8 +167,8 @@ it("selects only offered parameter values using opaque option IDs", async () => 
 });
 it("projects bounded block history into both Jev requests and accepts safe dotted parameter paths", async () => {
   const fetcher = vi.fn()
-    .mockResolvedValueOnce(new Response(JSON.stringify(answer())))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-1.13", answers: { p0: choice("o0", ["o0", "o1"]) } })));
+    .mockResolvedValueOnce(new Response(JSON.stringify(selection())))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-1.13", answers: { ...evaluation(), p0: choice("o0", ["o0", "o1"]) } })));
   const result = await createWorkflowSelector({ apiKey: "secret", fetch: fetcher }).select({
     ...input,
     history: ["research.web"],
@@ -138,8 +191,8 @@ it("rejects prototype parameter paths before sending to Jev", async () => {
 it("keeps descriptions, IDs, and arbitrary option strings out of both Jev requests", async () => {
   const fetcher = vi
     .fn()
-    .mockResolvedValueOnce(new Response(JSON.stringify(answer())))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-1.13", answers: { p0: choice("o0", ["o0", "o1"]) } })));
+    .mockResolvedValueOnce(new Response(JSON.stringify(selection())))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-1.13", answers: { ...evaluation(), p0: choice("o0", ["o0", "o1"]) } })));
   const sensitive = "CREDENTIAL_MARKER_DO_NOT_TRANSMIT";
   const selected = await createWorkflowSelector({ apiKey: "secret", fetch: fetcher }).select({
     ...input,
@@ -211,10 +264,10 @@ it("rejects insecure endpoint overrides", () => {
 it("rejects an invented parameter choice", async () => {
   const fetcher = vi
     .fn()
-    .mockResolvedValueOnce(new Response(JSON.stringify(answer())))
+    .mockResolvedValueOnce(new Response(JSON.stringify(selection())))
     .mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ model: "jev-1.13", answers: { p0: choice("o99") } }),
+        JSON.stringify({ model: "jev-1.13", answers: { ...evaluation(), p0: choice("o99") } }),
       ),
     );
   await expect(

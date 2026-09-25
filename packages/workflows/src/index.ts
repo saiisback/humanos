@@ -4,3 +4,4 @@ export * from "./state.js";
 export * from "./runtime.js";
 export * from "./ports.js";
 export * from "./assembly.js";
+export * from "./schedule.js";

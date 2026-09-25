@@ -67,6 +67,31 @@ afterAll(async () => {
   await db.query(`DROP SCHEMA "${schema}" CASCADE`);
   await db.close();
 });
+it("records Jev's review stop on a draft version and lets the owner refine the request", async () => {
+  const reviewing = createWorkflowService({
+    db, store, registry,
+    selector: { async select(input) {
+      return { selectedCandidateId: input.candidates[0]!.id, parameters: {}, confidence: 0.41, alignment: 0.9, risk: 0.1, injection: 0, needsReview: true, reasonCodes: ["goal_ambiguous"] };
+    } },
+    describeGoal: goal => ({ intent: /research/i.test(goal) ? "research" : "draft" }),
+    assemblyInput: async (goal) => ({ allowedCapabilities: [], inputs: { "content.generate": { value: { brief: { instruction: goal, context: {}, outputSchema: "text", maxCharacters: 1000 } } } } }),
+  });
+  const draft = await reviewing.createDraft(actor, null, "Research something vague");
+  await expect(reviewing.assemble(actor, draft.workflow.id)).rejects.toThrow("REVIEW_REQUIRED");
+  const stopped = await reviewing.detail(actor, draft.workflow.id);
+  const latest = stopped.versions.at(-1)!;
+  expect(latest.graph.nodes).toEqual([]);
+  expect(latest.activatedAt).toBeNull();
+  expect(latest.normalizedIntent).toMatchObject({ intent: "research", assembly: { outcome: "REVIEW_REQUIRED", failedChecks: ["needs_review", "confidence"], reasonCodes: ["goal_ambiguous"] } });
+  expect((await store.list<{ workflowId: string }>("workflow_runs")).filter(r => r.workflowId === draft.workflow.id)).toEqual([]);
+
+  const refined = await reviewing.refine(actor, draft.workflow.id, "Draft a two-sentence welcome note for new members");
+  const next = refined.versions.at(-1)!;
+  expect(next).toMatchObject({ goal: "Draft a two-sentence welcome note for new members", version: latest.version + 1, activatedAt: null, requiredCapabilities: [], normalizedIntent: {} });
+  expect(next.graph.nodes).toEqual([]);
+  await expect(reviewing.refine({ accountId: "different", rootId: null }, draft.workflow.id, "steal")).rejects.toThrow("NOT_FOUND");
+  await expect(reviewing.refine(actor, draft.workflow.id, "")).rejects.toThrow();
+});
 it("creates an account-owned workflow without requiring a human-root binding", async () => {
   const detail = await service.createDraft(actor, null, "Write a greeting");
   expect(detail.workflow).toMatchObject({

@@ -19,8 +19,8 @@ Infrastructure is configured, and live model requests succeed after the OpenCode
 
 | Requirement | Observed implementation |
 | --- | --- |
-| Jev selects deterministic workflow blocks | Not implemented. DeepSeek proposes the action; Jev currently evaluates risk, alignment, injection, and review. |
-| DeepSeek generates content only | Not implemented; its current proposal includes action type/capability. |
+| Jev selects deterministic workflow blocks | New constrained selector passes a live offered-candidate/parameter check. Legacy web missions still use DeepSeek proposals; new assembly and execution routes are not wired yet. |
+| DeepSeek generates content only | New content-only adapter passed a live typed greeting test. Legacy mission adapter remains until workflow UI cutover. |
 | Real email and restaurant reservations | No production connector in the current effect adapter. It supports only application/calendar effects against the configured local development service. |
 | Research-backed itinerary | No live research connector or assembled itinerary workflow verified. Model-only text must not be represented as checked current availability. |
 | Durable general workflow graphs and local recurrence | Approved design/plan exist; corresponding general workflow engine is not present. |
@@ -58,3 +58,21 @@ The user cancelled embedded-login work. Original HTTP/popup behavior was restore
 5. Browser fallback and recurrence only after their safety/recovery paths are implemented and tested.
 
 The proposed $10–20 price point remains a business target, not a measured result. Measure model tokens, connector costs, browser runtime, retry rate, and support overhead per completed workflow before making a savings claim.
+
+## Constrained adapter check
+
+OpenCode synthetic requests validated the new boundaries: Jev selected an offered candidate and enum parameter in 1.463 seconds; DeepSeek returned a typed greeting in 5.609 seconds. Jev's confidence was 0.49 and it requested review, so this selection is **not** safe to auto-execute. Assembly must enforce review/confidence thresholds. Model suite: 38 tests passed and typecheck passed. Whole-workspace typecheck and the web production build passed before these added adapters; web build still reports a large-bundle warning.
+
+## Durable workflow checkpoint — September 26, continued
+
+- **Live success in Helium:** saved workflow `eccfa73d-0a7e-4f30-9bd3-1c1c7ecc4e95` was reviewed and run. The UI displayed `Run complete`, a completed DeepSeek step, and the real two-sentence welcome draft. This was a content-only task, not an email delivery.
+- **Live stopped path:** `Research a three-day Japan itinerary` was saved but Jev requested review; no research or external action occurred. Confidence/review thresholds were not relaxed. Generic research reliability remains an acceptance gap.
+- **Flue:** its health endpoint returns `ok`. Saved-workflow assembly is now wired through the authenticated private Flue bridge when configured; unit tests cover configuration and transport. The subsequent live workflow was saved, but its outcome was not verified before Helium was in use by the user.
+- **Confirmation safety:** approval probes are separate from an atomic, run-locked final dispatch claim. Concurrent claims for one step yield exactly one winner. Changed payload, wrong actor, stale revision, expired lease, cancelled run, expired/revoked session, and repeat dispatch are rejected or halted for reconciliation. This is automated-test evidence, not proof of a live third-party send.
+- **Schedules:** local recurring/one-time schedules pin a workflow version and execution session, skip overlaps, and persist occurrences. The local server must remain running. Expired/revoked sessions stop execution; external effects still require exact confirmation. Live scheduled delivery has not been demonstrated.
+
+### Setup still required for live external tests
+
+`OPENCODE_API_KEY` provides model access only. Real web research uses `BRAVE_SEARCH_API_KEY`. The implemented email adapter uses `RESEND_API_KEY` plus an authorized `RESEND_FROM_EMAIL`. `CONNECTOR_ACCOUNT_ID` must be the signed-in HumanOS account ID, not just an unqualified wallet address. Set these only in the private server `.env`; never expose them as `VITE_*` keys. Provider credentials being present is not proof of valid account permissions or successful delivery.
+
+The real email test also needs an explicitly chosen recipient and final content approval. A reservation test needs an approved booking service/site and browser connection. A working logged-in browser driver is **not yet implemented**, and no reservation has been made. New standalone workflows currently display that no ENS agent is linked; the existing ENS mission flow remains separate. General workflow-to-ENS permission binding is **not complete**. Unsupported work pauses and must not be advertised as universal automation.
