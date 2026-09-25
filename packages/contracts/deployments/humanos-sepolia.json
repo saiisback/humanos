@@ -1,0 +1,26 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "recordedAt": "2026-09-25T17:36:09.926Z",
+  "officialEnsv2": "deployments/ensv2-sepolia.json",
+  "registrar": "0x727c3b6bdf63719d262cca9090d9e5311bb72b51",
+  "humanosRegistry": "0x795f86005477f76b892cde4ba0367bc333cb13ed",
+  "transactions": [
+    {
+      "hash": "0x2ed99d18c40dbb459141b69490a6b83a2f87274f64215e9da47211bbe269f0af",
+      "type": "CREATE",
+      "contractName": "HumanOSRegistrar",
+      "contractAddress": "0x727c3b6bdf63719d262cca9090d9e5311bb72b51",
+      "function": null,
+      "blockNumber": 11780753
+    },
+    {
+      "hash": "0x9c5b41b1275ee811479937e30acc15d8182fbd995a586412e5ddcdf32385b29b",
+      "type": "CALL",
+      "contractName": null,
+      "contractAddress": "0x657ea849311d3d5823348dded7c2aaafb3ede09e",
+      "function": "setSubregistry(uint256,address)",
+      "blockNumber": 11780754
+    }
+  ]
+}
