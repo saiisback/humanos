@@ -33,7 +33,7 @@ def _check_selector(selector: str) -> str:
 
 
 def _check_path(path: str) -> str:
-    if not _PATH.match(path) or "//" in path:
+    if not _PATH.match(path) or "//" in path or any(part in (".", "..") for part in path.split("/")):
         raise PolicyError("INVALID_PATH")
     return path
 

@@ -45,7 +45,8 @@ def test_session_is_a_browser_use_session_not_a_replacement_driver(tmp_path, sit
     async def run():
         policy = fixture_policy(site.origin)
         lease = ProfileManager(tmp_path / "profiles").acquire(ACCOUNT)
-        browser = GuardedSession(policy, lease.path, CHROMIUM, host_resolver_rules(policy, loopback_fixture=True))
+        browser = GuardedSession(policy, lease.path, CHROMIUM, host_resolver_rules(policy, loopback_fixture=True),
+                                 loopback_fixture=True)
         try:
             await browser.start()
             assert type(browser._session).__module__ == "browser_use.browser.session"

@@ -8,6 +8,7 @@ never read or exported, and one lock allows a single active run per account.
 from __future__ import annotations
 
 import asyncio
+import base64
 import fcntl
 import hashlib
 import os
@@ -100,6 +101,9 @@ class GuardedSession:
     executable_path: str
     resolver_rules: str
     headless: bool = True
+    # Controlled loopback fixture only: its pages are served from 127.0.0.1, which Chromium's
+    # local-network protection would otherwise refuse once responses carry our CSP.
+    loopback_fixture: bool = False
     guard: NetworkGuard = field(init=False)
     _session: Any = None
     page: Any = None
@@ -126,23 +130,34 @@ class GuardedSession:
                   "--block-new-web-contents", "--disable-background-networking", "--disable-sync",
                   "--disable-component-update", "--no-pings",
                   # Never touch the OS keychain / password store of the user's account.
-                  "--use-mock-keychain", "--password-store=basic"],
+                  "--use-mock-keychain", "--password-store=basic",
+                  *(["--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests"]
+                    if self.loopback_fixture and self.policy.allow_http else [])],
         )
         self._session = BrowserSession(browser_profile=profile)
         await self._session.start()
         root = self._session.cdp_client
         root.register.Fetch.requestPaused(self._on_request_paused)
-        # Browser-wide interception covers pages, popups, iframes and workers alike.
-        await root.send.Fetch.enable({"patterns": [{"urlPattern": "*", "requestStage": "Request"}]})
+        # Browser-wide interception covers pages, popups, iframes and workers alike. Documents
+        # are also paused at the response stage to attach the WebSocket/worker CSP below.
+        await root.send.Fetch.enable({"patterns": [{"urlPattern": "*", "requestStage": "Request"},
+                                                   {"urlPattern": "*", "resourceType": "Document", "requestStage": "Response"}]})
         try:
             await root.send.Browser.setDownloadBehavior({"behavior": "deny"})
         except Exception:
             pass
         self.page = await self._session.new_page()
         sid = await self.page.session_id
-        # WebSockets and service workers bypass request interception; refuse both.
-        await root.send.Network.setBlockedURLs({"urls": ["ws://*", "wss://*"]}, session_id=sid)
         await root.send.Network.setBypassServiceWorker({"bypass": True}, session_id=sid)
+
+    @property
+    def content_security_policy(self) -> str:
+        # WebSockets are invisible to request interception, and Chromium lets an http(s) source
+        # also match ws(s) on the same host. So script connections are limited to the exact
+        # policy paths; blob workers are refused and about:blank children inherit this policy.
+        paths = sorted({rule.path for rule in self.policy.preparation_reads} | {self.policy.submit.path})
+        sources = " ".join(f"{self.policy.origin}{path}" for path in paths) or "'none'"
+        return f"connect-src {sources}; worker-src 'none'; object-src 'none'; base-uri 'none'"
 
     def _on_request_paused(self, event: dict[str, Any], session_id: str | None) -> None:
         # cdp_use awaits returned awaitables inside its read loop: schedule, never return one.
@@ -153,6 +168,29 @@ class GuardedSession:
     async def _decide(self, event: dict[str, Any], session_id: str | None) -> None:
         root = self._session.cdp_client
         request_id = event["requestId"]
+        if "responseStatusCode" in event or "responseErrorReason" in event:
+            # Response stage (documents only): the request itself was already allowed.
+            try:
+                headers = [h for h in event.get("responseHeaders") or []
+                           if str(h.get("name", "")).lower() != "content-security-policy-report-only"]
+                headers.append({"name": "Content-Security-Policy", "value": self.content_security_policy})
+                if "responseStatusCode" not in event:
+                    raise ValueError("NO_RESPONSE")
+                status = int(event["responseStatusCode"])
+                body = ""
+                if not 300 <= status < 400:
+                    fetched = await root.send.Fetch.getResponseBody({"requestId": request_id}, session_id=session_id)
+                    raw = fetched.get("body", "")
+                    body = raw if fetched.get("base64Encoded") else base64.b64encode(raw.encode("utf-8")).decode()
+                # Headers rewritten via continueResponse are not enforced as CSP; a fulfilled response is.
+                await root.send.Fetch.fulfillRequest({"requestId": request_id, "responseCode": status,
+                                                      "responseHeaders": headers, "body": body}, session_id=session_id)
+            except Exception:
+                try:
+                    await root.send.Fetch.failRequest({"requestId": request_id, "errorReason": "BlockedByClient"}, session_id=session_id)
+                except Exception:
+                    pass
+            return
         try:
             request = event["request"]
             headers = {str(k).lower(): str(v) for k, v in (request.get("headers") or {}).items()}

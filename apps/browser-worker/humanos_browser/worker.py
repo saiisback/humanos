@@ -68,8 +68,14 @@ class Worker:
                 raise ProtocolError("NOT_STARTED")
             self.scope = SessionScope.from_start(command)
             return await self._start(command)
-        self.scope.admit(command)
         scope = self.scope
+        try:
+            scope.admit(command)
+        except ProtocolError as error:
+            if str(error) != "STALE_OBSERVATION":
+                raise
+            # A normal race with a changing page: in scope, so answer, but never act.
+            return result(command, scope.revision, "handoff", {"reason": "STALE_OBSERVATION", "message": "The page changed since it was observed. Observe again."})
         try:
             if name == "observe":
                 scope.revision += 1
@@ -131,8 +137,9 @@ class Worker:
             return result(command, 0, "unavailable", {"reason": "RUNTIME_MISSING", "message": "Browser Use is not installed for the worker."})
         if version != "0.13.10":
             return result(command, 0, "unavailable", {"reason": "INCOMPATIBLE_RUNTIME", "message": f"Browser Use {version} is not the verified release."})
+        loopback = bool(self.config.fixture_origin) and policy.allow_http
         try:
-            rules = host_resolver_rules(policy, loopback_fixture=bool(self.config.fixture_origin) and policy.allow_http)
+            rules = host_resolver_rules(policy, loopback_fixture=loopback)
             self.lease = ProfileManager(self.config.profile_root).acquire(command["accountId"])
         except ProfileError as error:
             reason = "PROFILE_BUSY" if error.code == "PROFILE_BUSY" else "POLICY_BLOCKED"
@@ -140,7 +147,8 @@ class Worker:
         except PolicyError:
             return result(command, 0, "handoff", {"reason": "POLICY_BLOCKED", "message": "The site address is not a safe public destination."})
         self.policy = policy
-        self.browser = GuardedSession(policy, self.lease.path, self.config.chromium, rules, headless=self.config.headless)
+        self.browser = GuardedSession(policy, self.lease.path, self.config.chromium, rules, headless=self.config.headless,
+                                      loopback_fixture=loopback)
         stage = "launch"
         try:
             await asyncio.wait_for(self.browser.start(), 30)
