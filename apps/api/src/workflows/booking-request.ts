@@ -29,10 +29,11 @@ export function parseBookingRequest(input: string, now: Date = new Date()): { re
   const invalid = new Set<BookingKey>();
   const seen = new Map<BookingKey, string>();
   for (const line of input.split(/\r?\n/)) {
-    const match = /^\s*([A-Za-z ]{2,24})\s*[:=]\s*(.{1,200})$/.exec(line);
+    const match = /^\s*([A-Za-z ]{2,24})\s*[:=]\s*(.*)$/.exec(line);
     const key = match ? ALIASES[match[1]!.trim().toLowerCase()] : undefined;
     if (!key) continue;
     const value = match![2]!.trim();
+    if (!value || value.length > 200) { invalid.add(key); continue; }
     // The same detail given twice with different values is ambiguous, not "last wins".
     if (seen.has(key) && seen.get(key) !== value) invalid.add(key);
     seen.set(key, value);
@@ -66,7 +67,20 @@ export function browserUseBookingPlan(request: Partial<BookingRequest>, policies
       ? `Choose a supported booking site: ${known.join(", ")}. Nothing was booked.`
       : "No booking site has been inspected and installed for HumanOS yet, so this booking can't be prepared. Nothing was booked." };
   }
-  const payload: Record<string, string> = { name: request.reservationName ?? "", party_size: request.partySize ?? "", email: request.contact ?? "" };
-  if (request.time) payload.preferred_time = request.time;
+  const missing = REQUIRED.filter(key => !request[key]?.trim());
+  if (missing.length) return { kind: "clarify", message: `Provide these booking details: ${missing.join(", ")}. Nothing was booked.` };
+  // Every material constraint must reach an audited field on the selected site.
+  // A policy that supports only name/contact cannot silently become a date/venue
+  // booking adapter. Until that site's mapping exists, stop for clarification.
+  const fields: Record<string, string> = {
+    name: request.reservationName!, party_size: request.partySize!, email: request.contact!,
+    restaurant: request.restaurant!, date: request.date!, timezone: request.timezone!,
+    ...(request.budget ? { budget: request.budget } : {}),
+  };
+  const unsupported = Object.keys(fields).filter(name => !policy.fields.some(field => field.name === name));
+  if (unsupported.length) return { kind: "clarify", message: `${policy.label} cannot enforce these requested booking details yet: ${unsupported.join(", ")}. An inspected field mapping is required; nothing was booked.` };
+  const checked = policy.validateFields(fields);
+  if (!checked.ok) return { kind: "clarify", message: `Correct these booking details: ${[...(checked.missing ?? []), ...(checked.invalid ?? [])].join(", ")}. Nothing was booked.` };
+  const payload = { ...fields, preferred_time: request.time! };
   return { kind: "plan", destination: `browser-use:${policy.id}`, payload };
 }

@@ -84,7 +84,7 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
   });
   browser = createBrowserStep({ executor: browserExecutor, recipes, authorize, confirmations });
   // Jev evaluates only finite, sanitized candidates; DeepSeek stays content-only.
-  browserUse = createBrowserUseStep({ client: browserUseClients, policies: browserUsePolicies, authorize, confirmations, store,
+  browserUse = createBrowserUseStep({ client: browserUseClients, policies: browserUsePolicies, authorize, confirmations, store, visibleWindow: !browserUseConfig.headless,
     selector: { select: input => createBrowserActionSelector(models).select(input) } });
   const browserSubmit: WorkflowExecutor = { execute: context => (isBrowserUse(context) ? browserUse! : browser!).executor.execute(context) };
   const external: WorkflowExecutor = { async execute(context) {
@@ -109,7 +109,7 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
   } };
   const models = { apiKey: env.OPENCODE_API_KEY!.trim(), timeoutMs: 20000 };
   // One routing context for candidate filtering, assembly inputs and diagnostics.
-  const routing = { recipes, browserEnabled: driverEnabled };
+  const routing = { recipes, browserEnabled: driverEnabled, browserUsePolicies, browserUseEnabled: browserUseClients !== null };
   const service = createWorkflowService({ db, store, registry, selector: boundedIntentSelector(createWorkflowSelector(models), routing), assemblyInput: async goal => workflowInputs(goal, routing),
     describeGoal: goal => { const intent = classifyWorkflowGoal(goal, routing); return { intent: intent.kind, plannedSteps: [...intent.blocks], ...(intent.recipeId ? { recipeId: intent.recipeId } : {}) }; },
     capabilityForNode,

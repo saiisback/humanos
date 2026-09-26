@@ -1,14 +1,14 @@
 import React from "react";
 import type { JsonValue, WorkflowVersion } from "@humanos/schemas";
 export const blockLabel: Record<string, string> = { "research.web": "Research trusted sources", "content.generate": "Write with DeepSeek", "content.transform": "Refine the content", "human.confirm": "Your final confirmation", "connector.call": "Send through your connected service", "human.input": "A detail is needed", "browser.navigate": "Open the approved website", "browser.extract": "Read page details", "browser.fill": "Prepare the form", "browser.submit": "Submit the reviewed form" };
-export function WorkflowReview({ version, busy, onRun }: { version: WorkflowVersion; busy: boolean; onRun(): void }) {
+export function WorkflowReview({ version, busy, onRun, startControl }: { version: WorkflowVersion; busy: boolean; onRun(): void; startControl?: React.ReactNode }) {
   return <section className="workflow-card" aria-label="Workflow review">
     <span className="eyebrow">Jev · deterministic blocks</span>
     <h2>Plan ready for review</h2>
     <ol className="workflow-steps">{version.graph.nodes.map(node => <li key={node.id}><span>{blockLabel[node.type] ?? node.type.replaceAll(".", " ")}</span></li>)}</ol>
     {version.requiredCapabilities.length > 0 && <p className="fine">Permissions: {version.requiredCapabilities.join(" · ")}</p>}
     <p className="fine">No external action has been taken. Sending or submitting will pause for your exact final confirmation.</p>
-    <button onClick={onRun} disabled={busy}>{version.activatedAt ? "Run again" : "Review & run"}</button>
+    {startControl ?? <button onClick={onRun} disabled={busy}>{version.activatedAt ? "Run again" : "Review & run"}</button>}
   </section>;
 }
 const record = (value: JsonValue | undefined): Record<string, JsonValue> | null =>
@@ -23,6 +23,11 @@ export function ConfirmationPreview({ value }: { value: JsonValue }) {
     {typeof binding?.sender === "string" && <><dt>Sent as</dt><dd className="hash">{binding.sender}</dd></>}
     {args ? Object.entries(args).map(([key, entry]) => <React.Fragment key={key}><dt>{key}</dt><dd className="workflow-output">{typeof entry === "string" ? entry : JSON.stringify(entry)}</dd></React.Fragment>)
       : <><dt>Payload</dt><dd><OutputView value={payload} /></dd></>}
+    {args && Object.entries(payload).filter(([key]) => key !== (record(payload.arguments) ? "arguments" : "fields")).map(([key, entry]) =>
+      <React.Fragment key={`material:${key}`}>
+        <dt>{key === "material" ? "Booking details and terms" : key === "value" ? "Price / deposit" : key}</dt>
+        <dd className="workflow-output">{typeof entry === "string" ? entry : <pre>{JSON.stringify(entry, null, 2)}</pre>}</dd>
+      </React.Fragment>)}
   </dl>;
 }
 export function OutputView({ value }: { value: JsonValue }) {

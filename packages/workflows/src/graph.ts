@@ -17,7 +17,8 @@ function references(value: unknown): string[] {
   return [];
 }
 
-function validateBlockInput(input: Record<string, unknown>, block: BlockDefinition): void {
+function validateBlockInput(input: Record<string, unknown>, block: BlockDefinition): Set<string> {
+  const stringReferences = new Set<string>();
   const schema = block.input as unknown as { entries?: Record<string, v.GenericSchema> };
   if (!schema.entries || Object.keys(input).some((key) => !(key in schema.entries!))) throw new Error("INVALID_BLOCK_INPUT");
   for (const [key, fieldSchema] of Object.entries(schema.entries)) {
@@ -25,8 +26,23 @@ function validateBlockInput(input: Record<string, unknown>, block: BlockDefiniti
     const value = input[key];
     if (value && typeof value === "object" && !Array.isArray(value) && "$ref" in value) {
       if (Object.keys(value).length !== 1 || typeof (value as Record<string, unknown>).$ref !== "string") throw new Error("INVALID_REFERENCE");
-    } else if (!v.safeParse(fieldSchema, value).success) throw new Error("INVALID_BLOCK_INPUT");
+    } else if (!v.safeParse(fieldSchema, value).success) {
+      // At planning time string records may contain deferred ancestor outputs.
+      // Keep the executable catalog schema strict: resolved values must still
+      // pass it at runtime, including length constraints and operation checks.
+      const record = fieldSchema as unknown as { type: string; key?: v.GenericSchema; value?: v.GenericSchema };
+      if (record.type !== "record" || !record.key || record.value?.type !== "string" ||
+          !value || typeof value !== "object" || Array.isArray(value)) throw new Error("INVALID_BLOCK_INPUT");
+      for (const [name, item] of Object.entries(value)) {
+        if (!v.safeParse(record.key, name).success || ["__proto__", "constructor", "prototype"].includes(name)) throw new Error("INVALID_BLOCK_INPUT");
+        if (item && typeof item === "object" && !Array.isArray(item) && "$ref" in item) {
+          const refs = references(item);
+          stringReferences.add(refs[0]!);
+        } else if (!v.safeParse(record.value, item).success) throw new Error("INVALID_BLOCK_INPUT");
+      }
+    }
   }
+  return stringReferences;
 }
 
 export function validateWorkflowGraph(graph: WorkflowGraph, registry: BlockRegistry): ValidatedGraph {
@@ -35,6 +51,7 @@ export function validateWorkflowGraph(graph: WorkflowGraph, registry: BlockRegis
   if (byId.size !== parsed.nodes.length) throw new Error("DUPLICATE_NODE");
   const children = new Map(parsed.nodes.map((node) => [node.id, [] as string[]]));
   const inDegree = new Map(parsed.nodes.map((node) => [node.id, node.dependsOn.length]));
+  const stringReferences = new Map<string, Set<string>>();
   for (const node of parsed.nodes) {
     const block = registry.get(node.type);
     if (block.version !== node.blockVersion) throw new Error("UNSUPPORTED_BLOCK_VERSION");
@@ -44,7 +61,7 @@ export function validateWorkflowGraph(graph: WorkflowGraph, registry: BlockRegis
       if (!byId.has(dependency)) throw new Error("MISSING_DEPENDENCY");
       children.get(dependency)!.push(node.id);
     }
-    validateBlockInput(node.input, block);
+    stringReferences.set(node.id, validateBlockInput(node.input, block));
   }
   const queue = parsed.nodes.filter((node) => node.dependsOn.length === 0);
   const order: WorkflowNode[] = [];
@@ -76,6 +93,7 @@ export function validateWorkflowGraph(graph: WorkflowGraph, registry: BlockRegis
       const brief = sourceNode.input.brief as { outputSchema?: string } | undefined;
       const variantFields = brief?.outputSchema ? sourceBlock.outputVariants?.[brief.outputSchema] : undefined;
       if (!(output.entries && field in output.entries) && !variantFields?.includes(field)) throw new Error("UNBOUND_REFERENCE");
+      if (stringReferences.get(node.id)!.has(ref) && sourceBlock.outputBindingKinds?.[field] !== "string") throw new Error("INCOMPATIBLE_REFERENCE");
     }
     const block = registry.get(node.type);
     if (block.requiresConfirmation && ![...preceding].some((id) => byId.get(id)!.type === "human.confirm")) throw new Error("CONFIRMATION_REQUIRED");

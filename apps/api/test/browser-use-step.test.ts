@@ -21,7 +21,7 @@ const store = new WorkflowStore(db), registry = createDefaultCatalog();
 const actor = { accountId: "11155111:0x1111111111111111111111111111111111111111", rootId: null };
 const other = { accountId: "11155111:0x2222222222222222222222222222222222222222", rootId: null };
 const FIELDS = { name: "Ada Lovelace", party_size: "2", email: "ada@example.com" };
-const service = createWorkflowService({ db, store, registry,
+const service = createWorkflowService({ newWorkflowAuthority: "account", /* Legacy account-workflow fixture. */ db, store, registry,
   selector: { async select(input) { return { selectedCandidateId: input.candidates.find(c => c.type === "complete")?.id ?? input.candidates[0]!.id, parameters: {}, confidence: 1, alignment: 1, risk: 0, injection: 0, needsReview: false, reasonCodes: [] }; } },
   assemblyInput: async () => ({ allowedCapabilities: [], inputs: {} }),
 });
@@ -59,16 +59,16 @@ async function bookingRun(payload: Record<string, string> = { ...FIELDS, preferr
 }
 
 /** Scripted stand-in for the worker, recording every command it receives. */
-function scriptedClient(script: { prepared?: () => { material: string[]; value: { amount: string; currency: string } | null }; submit?: () => "ok" | "unknown" | "crash" | "not_sent"; inspect?: () => "none" | "found"; observe?: () => "ok" | "login"; failPrepareAt?: number } = {}) {
+function scriptedClient(script: { prepared?: () => { material: string[]; value: { amount: string; currency: string } | null }; submit?: (request: BrowserUseRequest) => "ok" | "unknown" | "crash" | "not_sent"; inspect?: () => "none" | "found"; observe?: () => "ok" | "login"; failPrepareAt?: number } = {}) {
   const calls: string[] = [];
   let ref = 0;
   let prepares = 0;
   const factory = () => {
-    let action = 1, revision = 0;
+    let action = 1, revision = 0, closedSession = false;
     const sessionId = `bus-${++ref}`;
     const reply = (status: string, payload: unknown): BrowserWorkerResult => ({ protocolVersion: 1, accountId: actor.accountId, runId: "r", sessionId, actionId: action++, observationRevision: revision, status, payload } as unknown as BrowserWorkerResult);
     const client: BrowserUseClient = {
-      sessionId, get revision() { return revision; }, get nextActionId() { return action; },
+      sessionId, get revision() { return revision; }, get nextActionId() { return action; }, get alive() { return !closedSession; },
       async request(request: BrowserUseRequest) {
         calls.push(request.command);
         switch (request.command) {
@@ -89,7 +89,7 @@ function scriptedClient(script: { prepared?: () => { material: string[]; value: 
             return reply("prepared", { destination: "http://fixture.humanos.test:8123/reserve", fields, material, value, materialHash: hashCanonical({ fields, material, value }) });
           }
           case "submit": {
-            const mode = script.submit?.() ?? "ok";
+            const mode = script.submit?.(request) ?? "ok";
             if (mode === "crash") throw new BrowserUseClientError("CLOSED");
             if (mode === "unknown") return reply("failed", { code: "UNKNOWN_OUTCOME", message: "The booking outcome must be checked." });
             if (mode === "not_sent") return reply("failed", { code: "BROWSER", message: "The booking request was not sent." });
@@ -102,20 +102,23 @@ function scriptedClient(script: { prepared?: () => { material: string[]; value: 
           default: return reply("closed", {});
         }
       },
-      async close() { calls.push("close"); },
+      async close() { closedSession = true; calls.push("close"); },
     };
     return client;
   };
   return { calls, factory: vi.fn(factory) };
 }
 
-function harness(options: { client: () => BrowserUseClient; authorize?: (context: StepExecutionContext) => Promise<boolean>; clock?: () => Date; policies?: BrowserUsePolicyRegistry }) {
+function harness(options: { client: () => BrowserUseClient; authorize?: (context: StepExecutionContext) => Promise<boolean>; clock?: () => Date; policies?: BrowserUsePolicyRegistry; executionSignal?: AbortSignal }) {
   let step!: ReturnType<typeof createBrowserUseStep>;
   const confirmations = createWorkflowConfirmations({ store, requiresConfirmation: type => registry.get(type).requiresConfirmation, prepare: c => step.prepare(c), ...(options.clock ? { clock: options.clock } : {}) });
   const authorize = options.authorize ?? (async () => true);
-  step = createBrowserUseStep({ client: () => options.client(), policies: options.policies ?? policyRegistry(), authorize, confirmations, store });
+  step = createBrowserUseStep({ client: () => options.client(), policies: options.policies ?? policyRegistry(), authorize, confirmations, store, ...(options.clock ? { clock: options.clock } : {}) });
   const runner = createWorkflowRunner({ store, registry, content: { generate: vi.fn() }, workerId: `bu-${Math.random()}`, authorize, dispatchConfirmed: confirmations.probeApproved,
-    executors: { "human.confirm": { execute: confirmations.confirmNode }, "browser.submit": step.executor } });
+    ...(options.clock ? { clock: options.clock } : {}),
+    executors: { "human.confirm": { execute: confirmations.confirmNode }, "browser.submit": {
+      execute: context => step.executor.execute({ ...context, signal: options.executionSignal ?? context.signal }),
+    } } });
   return { step, confirmations, runner };
 }
 async function drain(runner: { tick(): Promise<boolean> }) { for (let i = 0; i < 6 && await runner.tick(); i++); }
@@ -151,6 +154,12 @@ describe("Browser Use step through the durable runner", () => {
     expect(receipts[0]).toMatchObject({ executor: "browser", providerReference: "R-ABC123", destination: "http://fixture.humanos.test:8123/reserve" });
     expect(receipts[0]!.metadata).toMatchObject({ policyId: "fixture-restaurant", executor: "browser-use" });
     expect((receipts[0]!.metadata as { materialHash: string }).materialHash).toMatch(/^0x[0-9a-f]{64}$/);
+    // Measured metrics only: 4 worker actions (start/observe/act/prepare), exact time match so no Jev call, no token/cost fields.
+    const metadata = receipts[0]!.metadata as Record<string, unknown>;
+    expect(metadata).toMatchObject({ preparationActions: 4, jevCalls: 0 });
+    expect(metadata.preparationMs).toBeTypeOf("number");
+    expect(metadata.submitMs).toBeTypeOf("number");
+    expect(Object.keys(metadata).some(key => /token|cost|usage/i.test(key))).toBe(false);
     // Every session was closed; no browser left running.
     expect(worker.calls.filter(c => c === "start").length).toBe(worker.calls.filter(c => c === "close").length);
   });
@@ -182,6 +191,40 @@ describe("Browser Use step through the durable runner", () => {
     expect(worker.calls).not.toContain("submit");
   });
 
+  it("does not submit when approval expires during the final authority check", async () => {
+    const runId = await bookingRun();
+    let now = Date.now();
+    const worker = scriptedClient();
+    const h = harness({ client: worker.factory, clock: () => new Date(now), authorize: async context => {
+      const claimed = await db.query("SELECT 1 FROM workflow_dispatch_claims WHERE step_id=$1", [context.step.id]);
+      if (claimed.rowCount) now += 2_000;
+      return true;
+    } });
+    await drain(h.runner);
+    const confirmation = await approve(h.confirmations, runId);
+    now = Date.parse(confirmation.expiresAt) - 1_000;
+    await drain(h.runner);
+    expect(worker.calls).not.toContain("submit");
+    expect((await run(runId)).run.status).toBe("RECONCILIATION_REQUIRED");
+  });
+
+  it("caps the worker permit at the confirmed approval expiry", async () => {
+    const runId = await bookingRun();
+    let now = Date.now();
+    let permitExpiry: string | undefined;
+    const worker = scriptedClient({ submit: request => {
+      if (request.command === "submit") permitExpiry = request.payload.permit.expiresAt;
+      return "ok";
+    } });
+    const h = harness({ client: worker.factory, clock: () => new Date(now) });
+    await drain(h.runner);
+    const confirmation = await approve(h.confirmations, runId);
+    now = Date.parse(confirmation.expiresAt) - 30_000;
+    await drain(h.runner);
+    expect((await run(runId)).run.status).toBe("COMPLETED");
+    expect(permitExpiry).toBe(confirmation.expiresAt);
+  });
+
   it("another account cannot see or approve the booking", async () => {
     const runId = await bookingRun();
     const worker = scriptedClient();
@@ -196,17 +239,11 @@ describe("Browser Use step through the durable runner", () => {
   it("revoked authority (account session or ENS agent) during preparation stops before any submission", async () => {
     const runId = await bookingRun();
     const worker = scriptedClient();
-    let allowed = true;
-    const h = harness({ client: worker.factory, authorize: async () => allowed });
+    // Authority is revoked once the post-approval re-verification of the held session has run
+    // (the second `prepare`), i.e. before the dispatch permit is issued.
+    const h = harness({ client: worker.factory, authorize: async () => worker.calls.filter(c => c === "prepare").length < 2 });
     await drain(h.runner);
     await approve(h.confirmations, runId);
-    // Revoke after the next preparation has started.
-    const original = worker.factory.getMockImplementation()!;
-    worker.factory.mockImplementation(() => {
-      const client = original();
-      return { ...client, get revision() { return client.revision; }, get nextActionId() { return client.nextActionId; },
-        request: async (r: BrowserUseRequest, s: AbortSignal) => { if (r.command === "act") allowed = false; return client.request(r, s); } };
-    });
     await drain(h.runner);
     expect((await run(runId)).run.status).toBe("REVOKED");
     expect(worker.calls).not.toContain("submit");
@@ -224,8 +261,9 @@ describe("Browser Use step through the durable runner", () => {
 
   it("a crash before the dispatch claim retries safely without submitting", async () => {
     const runId = await bookingRun();
-    // Preparations: 1 = review preview, 2 = approval probe, 3 = the booking step itself (pre-claim).
-    const worker = scriptedClient({ failPrepareAt: 3 });
+    // Preparations: 1 = review preview (session then held; the approval probe reuses it without a
+    // worker call), 2 = the booking step's in-session re-verification (pre-claim).
+    const worker = scriptedClient({ failPrepareAt: 2 });
     const h = harness({ client: worker.factory });
     await drain(h.runner);
     await approve(h.confirmations, runId);
@@ -267,6 +305,44 @@ describe("Browser Use step through the durable runner", () => {
     await drain(h2.runner);
     expect((await run(found)).run.status).toBe("COMPLETED");
     expect(recovered.calls.filter(c => c === "submit")).toHaveLength(1);
+  });
+
+  it("does not inspect an ambiguous submission after authority is revoked", async () => {
+    const runId = await bookingRun();
+    let allowed = true;
+    const worker = scriptedClient({ submit: () => { allowed = false; return "unknown"; }, inspect: () => "found" });
+    const h = harness({ client: worker.factory, authorize: async () => allowed });
+    await drain(h.runner);
+    await approve(h.confirmations, runId);
+    await drain(h.runner);
+    expect((await run(runId)).run.status).toBe("RECONCILIATION_REQUIRED");
+    expect(worker.calls).not.toContain("inspect_receipt");
+    expect(worker.calls.filter(c => c === "submit")).toHaveLength(1);
+  });
+
+  it("keeps the original cancellation signal during receipt inspection", async () => {
+    const runId = await bookingRun();
+    const controller = new AbortController();
+    const worker = scriptedClient({ submit: () => "unknown", inspect: () => "found" });
+    let inspectionCancelled = false;
+    const h = harness({ executionSignal: controller.signal, client: () => {
+      const client = worker.factory();
+      return { ...client, get revision() { return client.revision; }, get nextActionId() { return client.nextActionId; },
+        request: async (request, signal) => {
+          if (request.command === "inspect_receipt") {
+            controller.abort();
+            inspectionCancelled = signal.aborted;
+            if (signal.aborted) throw new BrowserUseClientError("ABORTED");
+          }
+          return client.request(request, signal);
+        },
+      };
+    } });
+    await drain(h.runner);
+    await approve(h.confirmations, runId);
+    await drain(h.runner);
+    expect(inspectionCancelled).toBe(true);
+    expect((await run(runId)).run.status).toBe("RECONCILIATION_REQUIRED");
   });
 
   it("login walls, missing details and unknown sites pause with a useful reason instead of guessing", async () => {

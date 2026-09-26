@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { BrowserUseClientError, browserUseClientFactory, browserUseRuntimeConfig, createBrowserUseClient } from "../src/workflows/browser-use-client.js";
@@ -25,6 +25,41 @@ const options = (script: string, extra: Partial<Parameters<typeof createBrowserU
 const signal = () => new AbortController().signal;
 
 describe("BrowserUseClient framing and isolation", () => {
+  it.skipIf(process.platform === "win32").each(["timeout", "abort", "protocol", "exit", "close"] as const)("cleans up worker descendants on %s without killing an unrelated process", async mode => {
+    const pidFile = join(dir, `descendant-${mode}.pid`);
+    const script = fakeWorker(`if (cmd.command === "start") {
+      Promise.all([import("node:child_process"), import("node:fs")]).then(([{ spawn }, { writeFileSync }]) => {
+        const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        descendant.once("spawn", () => { writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid)); ready(cmd); });
+      });
+    } else if (cmd.command === "close") reply(cmd, "closed", {});
+    else if (${JSON.stringify(mode)} === "protocol") process.stdout.write("bad JSON\\n");
+    else if (${JSON.stringify(mode)} === "exit") process.exit(1);`);
+    const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const client = createBrowserUseClient(scope, options(script, { actionTimeoutMs: 200 }));
+    let descendantPid: number | undefined;
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    try {
+      await client.request({ command: "start", payload: { policyId: "fixture-restaurant" } }, signal());
+      descendantPid = Number(readFileSync(pidFile, "utf8"));
+      expect(alive(descendantPid)).toBe(true);
+      if (mode === "close") await client.close();
+      else {
+        const controller = new AbortController();
+        const pending = client.request({ command: "observe", payload: {} }, controller.signal);
+        if (mode === "abort") controller.abort();
+        await expect(pending).rejects.toMatchObject({ code: { timeout: "TIMEOUT", abort: "ABORTED", protocol: "PROTOCOL", exit: "CLOSED" }[mode] });
+        await client.close();
+      }
+      await expect.poll(() => alive(descendantPid!), { timeout: 1500 }).toBe(false);
+      expect(alive(unrelated.pid!)).toBe(true);
+    } finally {
+      await client.close();
+      if (descendantPid && alive(descendantPid)) process.kill(descendantPid, "SIGKILL");
+      unrelated.kill("SIGKILL");
+    }
+  });
+
   it("binds requests to one session and parses typed results", async () => {
     const client = createBrowserUseClient(scope, options(fakeWorker(`if (cmd.command === "start") ready(cmd); else reply(cmd, "closed", {});`)));
     const ready = await client.request({ command: "start", payload: { policyId: "fixture-restaurant" } }, signal());
@@ -104,6 +139,34 @@ realWorker("BrowserUseClient against the real Browser Use worker", () => {
     });
   });
   afterAll(() => { site?.kill(); });
+
+  it.skipIf(process.platform === "win32")("aborting a real Browser Use session removes its Chromium process group", async () => {
+    const home = join(dir, "abort-home");
+    const pidFile = join(dir, "real-worker.pid");
+    mkdirSync(home, { recursive: true });
+    const client = createBrowserUseClient(scope, {
+      command: python,
+      args: ["-c", `import os, pathlib, runpy; pathlib.Path(${JSON.stringify(pidFile)}).write_text(str(os.getpid())); runpy.run_module('humanos_browser.worker', run_name='__main__')`],
+      cwd: workerDir, home,
+      env: { HUMANOS_BROWSER_PROFILE_ROOT: join(dir, "real-abort-profiles"), HUMANOS_BROWSER_CHROMIUM: chromium!, HUMANOS_BROWSER_FIXTURE_ORIGIN: `http://fixture.humanos.test:${port}` },
+    });
+    let workerPid: number | undefined;
+    // Read IDs and executable names only, never arguments or other process environments.
+    const groupMembers = () => execFileSync("/bin/ps", ["-axo", "pid=,pgid=,comm="], { encoding: "utf8" }).split("\n")
+      .filter(line => Number(/^\s*\d+\s+(\d+)/.exec(line)?.[1]) === workerPid);
+    try {
+      await client.request({ command: "start", payload: { policyId: "fixture-restaurant" } }, signal());
+      workerPid = Number(readFileSync(pidFile, "utf8"));
+      expect(groupMembers().some(line => /Chrome|chromium/i.test(line))).toBe(true);
+      const controller = new AbortController();
+      controller.abort();
+      await expect(client.request({ command: "observe", payload: {} }, controller.signal)).rejects.toMatchObject({ code: "ABORTED" });
+      await client.close();
+      await expect.poll(groupMembers, { timeout: 5000 }).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  }, 90000);
 
   it("starts, observes and closes a Browser Use session", async () => {
     const home = join(dir, "home");

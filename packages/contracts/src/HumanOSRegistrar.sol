@@ -326,11 +326,16 @@ contract HumanOSRegistrar is Ownable2Step {
         uint256 capabilities
     ) internal returns (address) {
         bytes memory name = _agentDns(root, label);
-        bytes[] memory calls = new bytes[](4);
+        bytes[] memory calls = new bytes[](5);
         calls[0] = abi.encodeCall(IHumanOSResolver.setAddress, (name, 60, abi.encodePacked(account)));
         calls[1] = abi.encodeCall(IHumanOSResolver.setText, (name, ROOT_KEY, root.rootId));
         calls[2] = abi.encodeCall(IHumanOSResolver.setText, (name, CAPABILITIES_KEY, Strings.toHexString(capabilities)));
         calls[3] = abi.encodeCall(IHumanOSResolver.setText, (name, STATUS_KEY, "active"));
+        // Public profile only: no private task inputs, and no new setter grant to the agent.
+        string memory about = capabilities == (1 << 2)
+            ? "HumanOS draft-writing agent with only drafts.write authority, subject to expiry and revocation. It cannot send emails, make reservations or spend wallet funds through HumanOS. HumanOS verifies onchain authorization before execution. ENS does not guarantee truthful content."
+            : "HumanOS workflow agent with scoped, expiring and revocable authority. HumanOS verifies onchain authorization before execution. Inspect live capabilities and expiry for current permissions. ENS identifies the agent; it does not guarantee truthful content.";
+        calls[4] = abi.encodeCall(IHumanOSResolver.setText, (name, "description", about));
         IHumanOSResolver resolver = IHumanOSResolver(_deployResolver(agentNode, calls));
         // Argument-scoped grants: the agent may write exactly these two text keys.
         resolver.grantSetterRoles(abi.encodeCall(IHumanOSResolver.setText, ("", STATUS_KEY, "")), account);

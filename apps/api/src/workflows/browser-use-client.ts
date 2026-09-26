@@ -35,6 +35,8 @@ export interface BrowserUseClient {
   readonly revision: number;
   /** Action id of the next request (valid while no other request is queued). */
   readonly nextActionId: number;
+  /** False once the worker exited, failed, or was closed; a dead session is never reused. */
+  readonly alive: boolean;
   request(command: BrowserUseRequest, signal: AbortSignal): Promise<BrowserWorkerResult>;
   close(): Promise<void>;
 }
@@ -78,16 +80,31 @@ export function createBrowserUseClient(scope: { accountId: string; runId: string
   const startupTimeout = options.startupTimeoutMs ?? 30_000;
   const actionTimeout = options.actionTimeoutMs ?? 30_000;
   let child: ChildProcessWithoutNullStreams | null = null;
+  let processClosed: Promise<void> = Promise.resolve();
+  let terminated = false;
   let closed = false;
   let buffer = "";
   let waiter: { resolve(line: string): void; reject(error: BrowserUseClientError): void } | null = null;
   let queue: Promise<unknown> = Promise.resolve();
 
+  function terminateWorker(): void {
+    if (!child || terminated) return;
+    terminated = true;
+    // POSIX detached spawning creates a private process group. Browser Use's
+    // Chromium children inherit it, so killing Python alone would orphan them.
+    // Signal only this owned group, once; never search by browser/process name or
+    // schedule a later PID kill that could target a reused identifier.
+    if (process.platform !== "win32" && child.pid) {
+      try { process.kill(-child.pid, "SIGKILL"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") child.kill("SIGKILL"); }
+    } else child.kill("SIGKILL");
+  }
+
   function fail(code: BrowserUseClientErrorCode): BrowserUseClientError {
     const error = new BrowserUseClientError(code);
     if (!closed) {
       closed = true;
-      child?.kill("SIGKILL");
+      terminateWorker();
     }
     waiter?.reject(error);
     waiter = null;
@@ -99,7 +116,10 @@ export function createBrowserUseClient(scope: { accountId: string; runId: string
       HOME: options.home ?? process.env.HOME ?? "",
       ...options.env,
     };
-    const worker = spawn(options.command, options.args ?? ["-m", "humanos_browser.worker"], { cwd: options.cwd, env, stdio: "pipe" });
+    const worker = spawn(options.command, options.args ?? ["-m", "humanos_browser.worker"], {
+      cwd: options.cwd, env, stdio: "pipe", detached: process.platform !== "win32",
+    });
+    processClosed = new Promise(resolve => worker.once("close", () => resolve()));
     worker.on("error", () => fail("UNAVAILABLE"));
     worker.on("exit", () => { if (!closed) fail("CLOSED"); });
     worker.stderr.resume(); // drained, never logged: may echo page or site data
@@ -147,6 +167,7 @@ export function createBrowserUseClient(scope: { accountId: string; runId: string
     sessionId,
     get revision() { return channel.revision; },
     get nextActionId() { return channel.nextActionId; },
+    get alive() { return !closed; },
     request(request, signal) {
       // One outstanding request per session: action ids and revisions stay strictly ordered.
       const next = queue.then(() => exchange(request, signal));
@@ -154,14 +175,13 @@ export function createBrowserUseClient(scope: { accountId: string; runId: string
       return next;
     },
     async close() {
-      if (closed || !child) { closed = true; return; }
+      if (closed || !child) { closed = true; await processClosed; return; }
       try {
         await this.request({ command: "close", payload: {} }, AbortSignal.timeout(Math.min(actionTimeout, 10_000)));
       } catch { /* killed below */ }
       closed = true;
-      child.kill("SIGTERM");
-      const worker = child;
-      setTimeout(() => worker.kill("SIGKILL"), 5000).unref();
+      terminateWorker();
+      await processClosed;
     },
   };
 }

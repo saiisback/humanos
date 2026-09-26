@@ -10,7 +10,7 @@ const schema = `test_workflow_scheduler_${Date.now()}`;
 const db = new Database(process.env.TEST_DATABASE_URL ?? "postgresql://saikarthik@127.0.0.1:55432/humanos", { schema });
 const store = new WorkflowStore(db), registry = createDefaultCatalog();
 const actor = { accountId: "11155111:0x1111111111111111111111111111111111111111", rootId: null };
-const service = createWorkflowService({ db, store, registry,
+const service = createWorkflowService({ newWorkflowAuthority: "account", /* Legacy account-workflow fixture. */ db, store, registry,
   selector: { async select(input) { return { selectedCandidateId: input.candidates.find(c => c.type === (input.history?.length ? "complete" : "content.generate"))!.id,
     parameters: {}, confidence: 1, alignment: 1, risk: 0, injection: 0, needsReview: false, reasonCodes: [] }; } },
   assemblyInput: async (goal) => ({ allowedCapabilities: [], inputs: { "content.generate": { value: { brief: { instruction: goal, context: {}, outputSchema: "text", maxCharacters: 100 } } } } }),

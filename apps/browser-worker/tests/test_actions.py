@@ -122,6 +122,25 @@ def test_changed_price_after_review_requires_a_new_review(worker, site):
     assert ledger(site)["writes"] == []
 
 
+@pytest.mark.xfail(strict=True, reason="Known production blocker: submitted fields lack a provider-enforced offer/terms binding; see docs/reports/browser-use-direct-review-2026-09-26.md")
+def test_click_handler_cannot_change_reviewed_terms_before_dispatch(worker, site):
+    set_variant(site, variant="click-drift")
+    _, prepared = prepare(worker)
+    assert prepared["status"] == "prepared"
+    submitted = worker.send("submit", permit_for(worker, prepared))
+    assert ledger(site)["writes"] == [], submitted
+    assert submitted["status"] != "submitted"
+
+
+def test_oversized_material_cannot_be_silently_approved(worker, site):
+    # Previously the authorization hash silently discarded material after character 500.
+    set_variant(site, venue="A" * 500 + " Cancellation costs JPY 10,000.")
+    _, prepared = prepare(worker)
+    assert prepared["status"] == "handoff", prepared
+    assert prepared["payload"]["reason"] == "PAGE_CHANGED"
+    assert ledger(site)["writes"] == []
+
+
 @pytest.mark.parametrize("override,expected", [
     ({"payloadHash": "0x" + "0" * 64}, "PERMIT"),
     ({"expiresAt": "2020-01-01T00:00:00Z"}, "PERMIT"),

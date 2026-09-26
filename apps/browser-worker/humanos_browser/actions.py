@@ -77,11 +77,17 @@ class BookingActions:
     async def _elements(self, selector: str):
         return await self.browser.page.get_elements_by_css_selector(selector)
 
-    async def _text(self, selector: str) -> str | None:
+    async def _text(self, selector: str, *, complete: bool = False) -> str | None:
         elements = await self._elements(selector)
         if not elements:
             return None
-        return sanitize(await elements[0].evaluate("() => this.innerText || this.textContent || ''"))
+        raw = await elements[0].evaluate("() => this.innerText || this.textContent || ''")
+        # Model observations may be shortened, but authorization evidence must
+        # never discard the tail of a venue, price, or cancellation condition.
+        text = sanitize(raw, 501 if complete else 500)
+        if complete and len(text) > 500:
+            raise Handoff("PAGE_CHANGED", "Booking details exceed the supported review size. Review them directly on the site; nothing was submitted.")
+        return text
 
     async def _value(self, selector: str) -> str | None:
         elements = await self._elements(selector)
@@ -174,13 +180,13 @@ class BookingActions:
             values[spec.name] = value
         material: list[str] = []
         for selector in self.policy.material_selectors[:16]:
-            text = await self._text(selector)
+            text = await self._text(selector, complete=True)
             if text is None:
                 raise Handoff("PAGE_CHANGED", "Booking details are missing from the page.")
             material.append(text)
         value = None
         if self.policy.value_selector:
-            text = await self._text(self.policy.value_selector)
+            text = await self._text(self.policy.value_selector, complete=True)
             if text is None:
                 raise Handoff("PAGE_CHANGED", "The price is missing from the page.")
             value = {"amount": parse_amount(text), "currency": self.policy.currency or ""}

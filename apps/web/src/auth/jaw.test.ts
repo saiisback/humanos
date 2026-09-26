@@ -121,6 +121,51 @@ describe("JAW SIWE adapter", () => {
       code: "USER_REJECTED",
     });
   });
+  it("distinguishes a blocked popup from user cancellation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-25T10:01:00.000Z"));
+    const client = createJawAuthClient(
+      {
+        request: async () => {
+          throw {
+            code: 4001,
+            message: "Failed to open popup. Please allow popups for this site.",
+          };
+        },
+      },
+      async () => {},
+    );
+    await expect(client.connect(challenge)).rejects.toMatchObject({
+      code: "POPUP_BLOCKED",
+    });
+  });
+  it("ends a stuck wallet request and ignores a late signed response", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-25T10:01:00.000Z"));
+    let resolveWallet!: (value: unknown) => void;
+    let disconnected = false;
+    const client = createJawAuthClient(
+      {
+        request: () => new Promise(resolve => { resolveWallet = resolve; }),
+      },
+      async () => { disconnected = true; },
+    );
+    const pending = client.connect(challenge);
+    const outcome = pending.then(() => "signed", error => error.code);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await Promise.race([outcome, Promise.resolve("still-pending")]))
+      .toBe("SIGN_IN_TIMEOUT");
+    expect(disconnected).toBe(true);
+    resolveWallet({
+      accounts: [{
+        address,
+        capabilities: {
+          signInWithEthereum: { message: message(), signature: "0x1234" },
+        },
+      }],
+    });
+    expect(await outcome).toBe("SIGN_IN_TIMEOUT");
+  });
   it("requests fresh SIWE for a returning connection", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-25T10:01:00.000Z"));

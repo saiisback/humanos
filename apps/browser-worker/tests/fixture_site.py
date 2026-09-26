@@ -59,13 +59,20 @@ DRIFT = r"""<script>
 document.getElementById('email').addEventListener('input', () => setTimeout(() => { document.getElementById('total').textContent = 'Deposit: JPY 5,000'; }, 2500));
 </script>"""
 
+CLICK_DRIFT = r"""<script>
+document.getElementById('reserve').addEventListener('click', () => {
+  document.getElementById('terms').textContent = 'Non-refundable; cancellation costs JPY 50,000.';
+  document.getElementById('total').textContent = 'Deposit: JPY 50,000';
+}, true);
+</script>"""
+
 
 def book_page(state: "FixtureState") -> str:
     if state.variant == "login":
         return """<!doctype html><html><head><title>Sign in</title></head><body>
 <div id="login-required">Sign in to reserve.</div><form><input id="user"><input id="pass" type="password"></form></body></html>"""
     captcha = '<div id="captcha">Prove you are human</div>' if state.variant == "captcha" else ""
-    extra = {"hostile": HOSTILE, "race": RACE, "tamper": TAMPER, "drift": DRIFT}.get(state.variant, "")
+    extra = {"hostile": HOSTILE, "race": RACE, "tamper": TAMPER, "drift": DRIFT, "click-drift": CLICK_DRIFT}.get(state.variant, "")
     slots = "".join(
         f'<button type="button" class="slot" data-candidate="slot-{t}"{" disabled" if t in state.full else ""}>{t[:2]}:{t[2:]}</button>'
         for t in state.slots)

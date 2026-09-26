@@ -15,6 +15,7 @@ import {
   CreateWorkflowRequestSchema,
   BoundedPayloadSchema,
   hashCanonical,
+  updateHotelDetails,
   type Workflow,
   type WorkflowVersion,
   type WorkflowDetailResponse,
@@ -35,6 +36,8 @@ import type { WorkflowActor } from "./types.js";
 import { resolveAuthorityPin, scheduleAuthorityCurrent } from "./agent-authorizer.js";
 
 export interface WorkflowServiceDependencies {
+  /** Server-only creation policy; legacy/import callers can retain account authority. */
+  newWorkflowAuthority?: "ens" | "account";
   db: Database;
   store: WorkflowStore;
   registry: BlockRegistry;
@@ -113,6 +116,9 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       status === "QUEUED" &&
       ![
         "CONNECTION_REQUIRED",
+        // Re-prepare an expired preview, never grant approval. The runner's
+        // confirmation boundary checks the current payload and expiry again.
+        "CONFIRMATION_REQUIRED",
         "INPUT_REQUIRED",
         "WAITING",
         "RETRY_SCHEDULED",
@@ -155,6 +161,9 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         if (!actor.rootId || !mission || mission.rootId !== actor.rootId)
           throw new Error("NOT_FOUND");
       }
+      // Freeze relative hotel dates when saved, rather than reinterpreting them on a later run.
+      goal = updateHotelDetails(goal, {}, new Date());
+      v.parse(CreateWorkflowRequestSchema, { goal });
       const now = new Date().toISOString(),
         id = randomUUID(),
         versionId = randomUUID();
@@ -164,6 +173,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         rootId: actor.rootId,
         missionId,
         name: goal.slice(0, 120),
+        authorityRequirement: missionId ? "account" : (deps.newWorkflowAuthority ?? "ens"),
         status: "DRAFT",
         latestVersionId: versionId,
         createdAt: now,
@@ -268,6 +278,8 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       v.parse(CreateWorkflowRequestSchema, { goal });
       const previous = await detail(actor, id);
       if (previous.workflow.status === "ARCHIVED") throw new Error("WORKFLOW_ARCHIVED");
+      goal = updateHotelDetails(goal, {}, new Date());
+      v.parse(CreateWorkflowRequestSchema, { goal });
       const latest = previous.versions.at(-1)!;
       const graph = { nodes: [] };
       await store.insertVersion({

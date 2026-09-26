@@ -152,9 +152,11 @@ class GuardedSession:
 
     @property
     def content_security_policy(self) -> str:
-        # WebSockets are invisible to request interception, and Chromium lets an http(s) source
-        # also match ws(s) on the same host. So script connections are limited to the exact
-        # policy paths; blob workers are refused and about:blank children inherit this policy.
+        # WebSockets bypass Fetch interception. Explicit http(s) scheme sources below
+        # reject ws(s), unlike 'self' or '*'; preserve these explicit sources even for
+        # same-origin requests. The real-browser boundary test checks permitted paths
+        # from both this document and an about:blank child, with a relaxed-CSP control.
+        # Blob workers are also refused and about:blank children inherit this policy.
         paths = sorted({rule.path for rule in self.policy.preparation_reads} | {self.policy.submit.path})
         sources = " ".join(f"{self.policy.origin}{path}" for path in paths) or "'none'"
         return f"connect-src {sources}; worker-src 'none'; object-src 'none'; base-uri 'none'"

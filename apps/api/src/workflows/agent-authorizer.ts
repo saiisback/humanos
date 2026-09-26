@@ -48,6 +48,13 @@ async function hasAgentBinding(
   ).rowCount;
 }
 
+async function requiresEns(db: Queryable, workflowId: string): Promise<boolean> {
+  return !!(await db.query(
+    "SELECT 1 FROM workflows WHERE id=$1 AND data->>'authorityRequirement'='ens'",
+    [workflowId],
+  )).rowCount;
+}
+
 /** The binding as persisted now: ACTIVE, unexpired, newest generation, owner/root/version/graph consistent. */
 async function currentBinding(
   db: Queryable,
@@ -95,7 +102,10 @@ export async function resolveAuthorityPin(
       [workflowId],
     )
   ).rows[0];
-  if (!latest) return { authorityMode: "account", agentBindingId: null };
+  if (!latest) {
+    if (await requiresEns(db, workflowId)) throw new Error("ENS_AGENT_REQUIRED");
+    return { authorityMode: "account", agentBindingId: null };
+  }
   const binding = await currentBinding(
     db,
     latest.id,
@@ -114,7 +124,7 @@ export async function scheduleAuthorityCurrent(
   ens?: WorkflowEnsPort | null,
 ): Promise<boolean> {
   if (schedule.authorityMode !== "ens")
-    return !(await hasAgentBinding(db, schedule.workflowId));
+    return !(await requiresEns(db, schedule.workflowId)) && !(await hasAgentBinding(db, schedule.workflowId));
   if (!schedule.agentBindingId) return false;
   const scope = {
     workflowId: schedule.workflowId,
@@ -237,7 +247,7 @@ export function createWorkflowAgentAuthorizer(
     )
       return false;
     if (run.authorityMode !== "ens")
-      return !(await hasAgentBinding(db, run.workflowId));
+      return !(await requiresEns(db, run.workflowId)) && !(await hasAgentBinding(db, run.workflowId));
     if (!ens || !run.agentBindingId || !context.actor.rootId) return false;
     const scope: BindingScope = {
       workflowId: run.workflowId,

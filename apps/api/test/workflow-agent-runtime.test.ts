@@ -36,6 +36,21 @@ const runsOf = async (workflowId: string) =>
   );
 
 describe("authority pinning at run creation", () => {
+  it("blocks direct runs and account schedules when a new workflow requires ENS", async () => {
+    const wf = await f.workflow("draft");
+    await f.db.query("UPDATE workflows SET data=jsonb_set(data,'{authorityRequirement}','\"ens\"') WHERE id=$1", [wf.id]);
+    await expect(f.start(wf.id)).rejects.toThrow("ENS_AGENT_REQUIRED");
+    expect(await scheduleAuthorityCurrent(f.db, { workflowId: wf.id, authorityMode: "account" } as WorkflowSchedule, new Date())).toBe(false);
+    expect(await runsOf(wf.id)).toHaveLength(0);
+  });
+  it("rejects an account-pinned run at dispatch when its workflow requires ENS", async () => {
+    const wf = await f.workflow("draft");
+    const run = await f.start(wf.id);
+    await f.db.query("UPDATE workflows SET data=jsonb_set(data,'{authorityRequirement}','\"ens\"') WHERE id=$1", [wf.id]);
+    await f.drain();
+    expect((await f.run(run.id))?.status).toBe("REVOKED");
+    expect(f.effectsFor(run.id)).toEqual([]);
+  });
   it("keeps account-only behavior when a workflow has no agent binding", async () => {
     const wf = await f.workflow("draft");
     const run = await f.start(wf.id);
