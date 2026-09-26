@@ -1,5 +1,17 @@
 # Local verification — 25 September 2026
 
+## Workflow ENS integration update — 26 September 2026
+
+The durable workflow workspace now has its own ENS agent lifecycle and execution authorization. The Identity link no longer opens the legacy mission screen. Agent scopes, immutable version/generation pins, expiry/revocation, independent receipt publication and management UI are covered by the [workflow integration report](reports/workflow-ens-integration.md).
+
+Final local gates passed: 841 TypeScript tests, 26 Foundry tests, workspace typecheck and build. The targeted desktop/mobile browser batch passed 24 tests, followed by 2 receipt-display checks. Test providers are fixtures unless explicitly identified as local contracts; these numbers are not claims of live service success.
+
+A combined test uses real local ENSv2 contracts on Anvil, PostgreSQL and the workflow runner: registration, authorized research execution with a counting provider fixture, receipt-hash publication, then denial after actual onchain revocation. This is not evidence of a live Sepolia registration, email delivery or reservation. Owner review remains required for live registration and the final exact external action.
+
+The remaining section preserves the earlier baseline rather than rewriting its historical model configuration or live-readiness findings.
+
+## Earlier baseline
+
 The JAW, Proof of Human, ENSv2 and chat implementation passes the local automated gates. These runs use synthetic JAW and World browser transports, fixture ENS/model/effect transports in the backend browser harness, real PostgreSQL, and real ENSv2 contracts on Anvil. They do not establish a live sponsor integration or public deployment.
 
 Environment: Node 22.12.0, pnpm 10.12.4, PostgreSQL 17.11, Foundry 1.8.3, Chromium/Playwright 1.63.0. The local test database used `postgresql://saikarthik@127.0.0.1:55432/humanos` through the explicitly supplied `TEST_DATABASE_URL`. No credentialed World, JAW, model, or HumanOS Sepolia transaction was claimed.

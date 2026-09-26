@@ -1,6 +1,6 @@
 # ENSv2-backed durable workflows
 
-Status: design approved by the user on September 26, 2026; implementation pending plan review.
+Status: design and implementation plan approved by the user on September 26, 2026. Implementation and local evidence are recorded in `docs/reports/workflow-ens-integration.md`; live Sepolia acceptance remains separate.
 
 ## Outcome
 

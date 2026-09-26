@@ -16,6 +16,7 @@ import { hashCanonical } from "@humanos/schemas";
 import { tableName, validateEntity, type Table } from "./schema.js";
 export * from "./schema.js";
 export { WorkflowStore, type WorkflowLease } from "./workflows.js";
+export { WorkflowAgentStore, type WorkflowAgentEvidence } from "./workflow-agents.js";
 interface Runner {
   query<T extends QueryResultRow = QueryResultRow>(
     sql: string,
@@ -216,7 +217,7 @@ export class Database extends Repository {
       await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         this.schema + ":humanos:migrations",
       ]);
-      for (const file of ["0001_initial.sql", "0002_workflows.sql"]) {
+      for (const file of ["0001_initial.sql", "0002_workflows.sql", "0003_workflow_agents.sql", "0004_workflow_agent_jobs.sql"]) {
         await tx.query(
           await readFile(
             new URL(`../migrations/${file}`, import.meta.url),

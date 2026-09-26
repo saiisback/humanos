@@ -8,6 +8,7 @@ import {
   createEnsAdapterFromEnv,
   createPostgresTransactionJournal,
   initializeEnsTransactionJournal,
+  type WorkflowEnsPort,
 } from "@humanos/ens";
 import { createEnsReceiptPublisher } from "./ens-receipts.js";
 import { createSepoliaSiweVerifier } from "./services/siwe.js";
@@ -64,6 +65,7 @@ if (process.env.FLUE_URL && deepSeekKey && process.env.FLUE_INTERNAL_SECRET)
   config.flueUrl = process.env.FLUE_URL;
 if (process.env.FLUE_INTERNAL_SECRET)
   config.internalSecret = process.env.FLUE_INTERNAL_SECRET;
+let workflowEns: WorkflowEnsPort | null = null;
 if (
   process.env.SEPOLIA_RPC_URL &&
   process.env.ENS_REGISTRAR_ADDRESS &&
@@ -78,12 +80,14 @@ if (
     createPostgresTransactionJournal(ensDb),
   );
   config.ens = ens;
+  // Workflow agents reuse this adapter's signer and durable journal; never a second signer.
+  workflowEns = ens.workflow;
   config.updateEnsReceipt = createEnsReceiptPublisher({
     db: ensDb,
     ensAdapter: ens,
   });
 }
-const workflowRuntime = openCodeKey ? createWorkflowRuntime(db, process.env) : null;
+const workflowRuntime = openCodeKey ? createWorkflowRuntime(db, process.env, { ens: workflowEns }) : null;
 if (workflowRuntime) config.workflows = workflowRuntime;
 const shutdown = new AbortController();
 process.once("SIGTERM", () => shutdown.abort());

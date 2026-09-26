@@ -27,8 +27,12 @@ export function revisePinnedSchedule(current: WorkflowSchedule, patch: { definit
   return { ...candidate, status, nextFireAt, updatedAt: now.toISOString() };
 }
 
-export interface WorkflowSchedulerDependencies { store: WorkflowStore; registry: BlockRegistry; pollMs?: number }
-export function createWorkflowScheduler({ store, registry, pollMs = 1000 }: WorkflowSchedulerDependencies) {
+export interface WorkflowSchedulerDependencies {
+  store: WorkflowStore; registry: BlockRegistry; pollMs?: number;
+  /** Local authority check; false pauses the schedule rather than adopting newer authority. */
+  authorityCurrent?(schedule: WorkflowSchedule, now: Date): Promise<boolean>;
+}
+export function createWorkflowScheduler({ store, registry, pollMs = 1000, authorityCurrent }: WorkflowSchedulerDependencies) {
   if (!Number.isInteger(pollMs) || pollMs < 100 || pollMs > 60_000) throw new Error("INVALID_POLL_INTERVAL");
   async function tick(now = new Date()): Promise<number> {
     if (!Number.isFinite(now.getTime())) throw new Error("INVALID_NOW");
@@ -42,11 +46,18 @@ export function createWorkflowScheduler({ store, registry, pollMs = 1000 }: Work
         const version = await store.get<WorkflowVersion>("workflow_versions", current.workflowVersionId);
         if (!workflow || !version || workflow.status !== "ACTIVE" || !version.activatedAt) break;
         validateWorkflowGraph(version.graph, registry);
+        if (authorityCurrent && !await authorityCurrent(current, now)) {
+          // Revoked, expired, superseded or upgraded authority pauses; the owner re-enables explicitly.
+          const paused: WorkflowSchedule = { ...current, status: "PAUSED", nextFireAt: null, updatedAt: now.toISOString() };
+          try { await store.compareAndSwapSchedule(current, paused); }
+          catch (error) { if (!(error instanceof Error && error.message === "SCHEDULE_CONFLICT")) throw error; }
+          break;
+        }
         const at = current.nextFireAt;
         const snapshot = createScheduledRunSnapshot(workflow, version, current, at, now.toISOString());
         let inserted: boolean;
         try { inserted = await store.createOccurrence(current.id, at, snapshot.run, snapshot.steps); }
-        catch (error) { if (error instanceof Error && error.message === "SCHEDULE_MISMATCH") break; throw error; }
+        catch (error) { if (error instanceof Error && ["SCHEDULE_MISMATCH", "AGENT_BINDING_INACTIVE", "AGENT_BINDING_MISMATCH"].includes(error.message)) break; throw error; }
         if (inserted) created++;
         const following = nextOccurrence(current, new Date(at));
         const next: WorkflowSchedule = { ...current, lastFireAt: at, nextFireAt: following?.at ?? null,

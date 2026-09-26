@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Workflow, WorkflowDetailResponse, WorkflowRun, WorkflowRunDetailResponse, JsonValue, WorkflowConnection, WorkflowConnectionsResponse } from "@humanos/schemas";
 import { WorkflowConnections } from "./connections";
+import { WorkflowAgentPanel, identityNavigation, ownedDetail, runGate, workflowSearch, type Load, type WorkflowAgentDetailResponse } from "./agent-panel";
 import { api, ApiError } from "../../lib/api";
 import { RefineCard, planStatus } from "./refine-card";
 import { useAuth } from "../auth/use-auth";
@@ -23,6 +24,8 @@ export function WorkflowWorkspace() {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [connections, setConnections] = useState<WorkflowConnection[] | null>(null);
   const [connectionsUnavailable, setConnectionsUnavailable] = useState(false);
+  const [agent, setAgent] = useState<Load<WorkflowAgentDetailResponse>>({ status: "loading" });
+  const [identityOpen, setIdentityOpen] = useState(() => new URLSearchParams(location.search).has("identity"));
   const requestKey = useRef<string | null>(null);
   const selectedId = useRef<string | null>(null);
   const generation = useRef(0);
@@ -52,12 +55,13 @@ export function WorkflowWorkspace() {
     setRun(response); setOutputs(values.outputs); setPreview(prepared);
   }
   async function select(id: string) {
-    selectedId.current = id; generation.current++; requestKey.current = null; setRun(null); setOutputs([]); setPreview(null);
+    selectedId.current = id; generation.current++; requestKey.current = null; setRun(null); setOutputs([]); setPreview(null); setAgent({ status: "loading" });
     const actor = account.current, stamp = generation.current;
     const response = await api<WorkflowDetailResponse>(`/workflows/${encodeURIComponent(id)}`);
     if (!current(actor, id, stamp)) return;
     setDetail(response);
-    history.replaceState(null, "", `?workflow=${encodeURIComponent(id)}`);
+    history.replaceState(history.state, "", workflowSearch(id, new URLSearchParams(location.search).has("identity")));
+    void refreshAgent(id);
     const runs = await api<{ runs: WorkflowRun[] }>(`/workflows/${encodeURIComponent(id)}/runs`);
     if (runs.runs[0] && current(actor, id, stamp)) await loadRun(runs.runs[0].id);
   }
@@ -69,8 +73,19 @@ export function WorkflowWorkspace() {
       if (actor === account.current && response.accountId === actor) { setConnections(response.connections); setConnectionsUnavailable(false); }
     } catch { if (actor === account.current) { setConnections(null); setConnectionsUnavailable(true); } }
   }
+  async function refreshAgent(id: string) {
+    const actor = account.current, stamp = generation.current;
+    try {
+      const response = await api<WorkflowAgentDetailResponse>(`/workflows/${encodeURIComponent(id)}/agent`);
+      if (!current(actor, id, stamp)) return;
+      const owned = actor ? ownedDetail(response, actor, id) : null;
+      setAgent(owned ? { status: "ready", value: owned } : { status: "unavailable", message: "Agent records did not match this account and workflow." });
+    } catch (cause) {
+      if (current(actor, id, stamp)) setAgent({ status: "unavailable", message: cause instanceof Error ? cause.message : "ENS agent status is unavailable." });
+    }
+  }
   useEffect(() => {
-    generation.current++; selectedId.current = null; setDetail(null); setRun(null); setOutputs([]); setPreview(null); setWorkflows([]);
+    generation.current++; selectedId.current = null; setDetail(null); setRun(null); setOutputs([]); setPreview(null); setWorkflows([]); setAgent({ status: "loading" });
     setConnections(null); setConnectionsUnavailable(false);
     if (auth.account) void refreshConnections();
     if (auth.account) void perform(async () => { await refreshList(); const id = new URLSearchParams(location.search).get("workflow"); if (id) await select(id); });
@@ -85,7 +100,20 @@ export function WorkflowWorkspace() {
     }, 1800);
     return () => { active = false; clearInterval(timer); };
   }, [run?.run.id, status]);
+  useEffect(() => {
+    const sync = () => setIdentityOpen(new URLSearchParams(location.search).has("identity"));
+    addEventListener("popstate", sync);
+    return () => removeEventListener("popstate", sync);
+  }, []);
+  function setIdentity(open: boolean) {
+    const next = identityNavigation(location.search, history.state, open);
+    if (next.kind === "back") { history.back(); return; }
+    if (next.kind === "push") history.pushState({ humanosIdentity: true }, "", next.url);
+    if (next.kind === "replace") history.replaceState(null, "", next.url || location.pathname);
+    setIdentityOpen(open);
+  }
   const latest = detail?.versions.at(-1);
+  const gate = latest ? runGate(agent, latest.id) : null;
   async function actOnRun(action: "confirm" | "resume" | "cancel", body: unknown = {}) {
     if (!run || !detail) return;
     const id = run.run.id;
@@ -124,14 +152,16 @@ export function WorkflowWorkspace() {
     const response = await api<WorkflowDetailResponse>("/workflows", { goal: goal.trim() });
     if (actor !== account.current || stamp !== generation.current) return;
     generation.current++; selectedId.current = response.workflow.id; requestKey.current = null;
-    setDetail(response); setRun(null); setOutputs([]); setPreview(null); setGoal("");
+    setDetail(response); setRun(null); setOutputs([]); setPreview(null); setGoal(""); setAgent({ status: "loading" });
     history.replaceState(null, "", `?workflow=${response.workflow.id}`);
+    void refreshAgent(response.workflow.id);
     await refreshList(); await assemble(response.workflow.id);
   }
   async function startRun() {
     if (!detail || !latest) return;
     const actor = account.current, selected = detail.workflow.id, stamp = generation.current;
     if (!current(actor, selected, stamp)) return;
+    if (!runGate(agent, latest.id).allowed) return;
     if (!latest.activatedAt) {
       const activated = await api<WorkflowDetailResponse>(`/workflows/${selected}/activate`, { versionId: latest.id, expectedGraphHash: latest.graphHash });
       if (!current(actor, selected, stamp)) return;
@@ -145,13 +175,17 @@ export function WorkflowWorkspace() {
     requestKey.current = null;
   }
   const labels: Record<string, string> = { QUEUED: "Queued", RUNNING: "Working on it", COMPLETED: "Run complete", CONNECTION_REQUIRED: "Connect a service to continue", CONFIRMATION_REQUIRED: "Your final confirmation", INPUT_REQUIRED: "One detail is missing", RECONCILIATION_REQUIRED: "Outcome needs checking — not retried", WAITING: "Waiting", RETRY_SCHEDULED: "Retry scheduled", CANCELLED: "Cancelled", FAILED: "Run stopped", REVOKED: "Permission no longer available" };
-  return <AppShell missions={[]} workflows={workflows} onSelectWorkflow={id => void perform(() => select(id))} selectedId={detail?.workflow.id ?? null} onSelect={() => {}} onNew={() => { generation.current++; selectedId.current = null; setDetail(null); setRun(null); setOutputs([]); setPreview(null); setError(""); history.replaceState(null, "", "/"); }} root={auth.root} account={auth.account} readiness={null} connectionsPanel={<WorkflowConnections connections={auth.account ? connections : null} unavailable={!auth.account || connectionsUnavailable} />} onSignOut={() => { generation.current++; void perform(auth.signOut); }} busy={busy} error={error} onRetry={() => void perform(async () => { await auth.refresh(); await refreshList(); await refreshConnections(); if (detail) await select(detail.workflow.id); })}
+  return <AppShell missions={[]} workflows={workflows} onSelectWorkflow={id => void perform(() => select(id))} selectedId={detail?.workflow.id ?? null} onSelect={() => {}} onNew={() => { generation.current++; selectedId.current = null; setDetail(null); setRun(null); setOutputs([]); setPreview(null); setAgent({ status: "loading" }); setError(""); history.replaceState(null, "", "/"); }} root={auth.root} account={auth.account} readiness={null} connectionsPanel={<WorkflowConnections connections={auth.account ? connections : null} unavailable={!auth.account || connectionsUnavailable} />}
+    identityPanel={<WorkflowAgentPanel workflowId={detail?.workflow.id ?? null} versionId={latest?.id ?? null} versions={detail?.versions.map(version => ({ id: version.id, version: version.version })) ?? []} account={auth.account} root={auth.root} onClose={() => setIdentity(false)} onChanged={async () => { const id = selectedId.current; if (id) await refreshAgent(id); }} />}
+    identityOpen={identityOpen} onIdentityOpenChange={setIdentity}
+    onSignOut={() => { generation.current++; void perform(auth.signOut); }} busy={busy} error={error} onRetry={() => void perform(async () => { await auth.refresh(); await refreshList(); await refreshConnections(); if (detail) await select(detail.workflow.id); })}
     composer={<Composer value={goal} onChange={setGoal} onSubmit={() => void perform(create)} disabled={busy || !auth.account} canSubmit={!!auth.account} preparing={busy && !!goal} providerNote="Jev selects audited steps · DeepSeek writes the content" />}>
     {!auth.account ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>Make room for being human.</h1><p>Delegate the work. Keep the final say.</p><button disabled={busy || auth.status === "signing-in" || !auth.jawConfigured} onClick={() => void perform(auth.signIn)}>{auth.status === "signing-in" ? "Signing in…" : "Sign in with JAW"}</button>{!auth.jawConfigured && <button className="secondary" disabled={busy} onClick={() => void perform(auth.refresh)}>Retry connection</button>}</section> : !detail ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>What can I take off your plate?</h1><p>One request. A saved workflow. You keep the final say.</p><div className="workflow-suggestions">{["Write a friendly introduction email draft", "Research a three-day Japan itinerary", "Send an email to someone"].map(text => <button key={text} className="secondary" onClick={() => setGoal(text)}>{text} ↗</button>)}</div><p className="fine">Drafts work with your model connection. Research and sending need their respective services.</p></section> : <div className="workflow-conversation">
       <div className="workflow-prompt">{latest?.goal}</div>
       {busy && <p role="status" className="fine">Saving and preparing your workflow…</p>}
       {latest && planStatus(latest) ? <RefineCard version={latest} busy={busy} onRefine={text => void perform(() => refine(detail.workflow.id, text))} onRetry={() => void perform(() => assemble(detail.workflow.id))} />
-        : latest && <WorkflowReview version={latest} busy={busy || !!run && !terminal.has(run.run.status)} onRun={() => void perform(startRun)} />}
+        : latest && <WorkflowReview version={latest} busy={busy || !gate?.allowed || !!run && !terminal.has(run.run.status)} onRun={() => void perform(startRun)} />}
+      {latest && agent.status === "ready" && !agent.value.bindings.length && <p className="fine"><button className="agent-link" onClick={() => setIdentity(true)}>Enable ENS agent</button> to review this version’s scope and expiry before running with delegated authority. Until then, runs are account-only.</p>}
       {latest?.activatedAt && <ScheduleEditor workflowId={detail.workflow.id} versionId={latest.id} schedules={detail.schedules} onChanged={async () => { if (account.current && selectedId.current === detail.workflow.id) await select(detail.workflow.id); }} />}
       {run && <section className="workflow-card" aria-label="Run timeline"><h2 role="status">{labels[run.run.status] ?? run.run.status}</h2>{run.run.pauseReason && <p>{run.run.pauseReason}</p>}<ol className="workflow-steps">{run.steps.map(step => <li key={step.id}><span>{blockLabel[step.blockType] ?? step.blockType}</span><small>{step.status.toLowerCase().replaceAll("_", " ")}</small></li>)}</ol>
         {outputs.map(output => <OutputView key={output.stepRunId} value={output.output} />)}
@@ -159,7 +193,7 @@ export function WorkflowWorkspace() {
         {run.receipts.map(receipt => <div className="workflow-receipt" key={receipt.id}><strong>{receipt.summary}</strong><p>{receipt.destination}</p><small>Provider reference: {receipt.providerReference ?? "Recorded receipt"}</small></div>)}
         <div className="workflow-actions">{["CONNECTION_REQUIRED", "WAITING", "RETRY_SCHEDULED"].includes(status ?? "") && <button className="secondary" disabled={busy} onClick={() => void perform(() => actOnRun("resume"))}>Retry after resolving</button>}{!terminal.has(run.run.status) && <button className="secondary" disabled={busy} onClick={() => void perform(() => actOnRun("cancel"))}>Cancel run</button>}</div>
       </section>}
-      <p className="fine">{detail.workflow.missionId ? "Linked to an ENS agent mandate." : "Account-owned workflow · No ENS agent linked."} <a href="/?identity=1">Identity & permissions</a></p>
+      <p className="fine agent-summary" role={gate && !gate.allowed ? "status" : undefined}>{gate?.note} <button className="agent-link" onClick={() => setIdentity(true)}>Identity & permissions</button></p>
     </div>}
   </AppShell>;
 }

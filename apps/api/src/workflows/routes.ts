@@ -10,10 +10,13 @@ import { createPinnedSchedule, revisePinnedSchedule } from "./scheduler.js";
 import type { WorkflowStore } from "@humanos/database";
 import type { createWorkflowService } from "./service.js";
 import type { createWorkflowConfirmations } from "./confirmations.js";
+import type { createWorkflowAgentService } from "./agents.js";
+import { createWorkflowAgentRoutes } from "./agent-routes.js";
 import type { WorkflowActor } from "./types.js";
 export interface WorkflowApi {
   service: ReturnType<typeof createWorkflowService>;
   store: WorkflowStore;
+  agents?: ReturnType<typeof createWorkflowAgentService>;
   confirmations?: ReturnType<typeof createWorkflowConfirmations>;
   connections?(actor: WorkflowActor): Promise<WorkflowConnectionsResponse>;
   flue?: { url: string; secret: string };
@@ -21,11 +24,13 @@ export interface WorkflowApi {
 const planMessages: Record<string, string> = {
   REVIEW_REQUIRED: "Jev could not confirm a safe plan for this request, so nothing ran. Your request is saved; edit it with the output, recipient, or constraints you want and prepare it again.",
   NO_CANDIDATES: "No audited step fits this request yet, so nothing ran. Your request is saved; rephrase it as a draft, sourced research, or an email to one recipient.",
+  ENS_AGENT_REQUIRED: "This workflow now needs an active ENS agent for its current version. Enable or replace the agent; nothing ran.",
 };
 export function createWorkflowRoutes(deps: WorkflowApi, authenticate: (c: Context) => Promise<WorkflowActor>) {
   const app = new Hono<{ Variables: { actor: WorkflowActor } }>();
   app.use("*", async (c, next) => { c.set("actor", await authenticate(c)); await next(); });
-  const known = new Set(["GRAPH_CHANGED", "IMMUTABLE_VERSION", "WORKFLOW_NOT_ACTIVE", "WORKFLOW_ARCHIVED", "IDEMPOTENCY_CONFLICT", "RESUME_NOT_ALLOWED", "INVALID_RUN_TRANSITION", "CONFIRMATION_UNAVAILABLE", "CONFIRMATION_MISMATCH", "REVIEW_REQUIRED", "NO_CANDIDATES", "EMPTY_WORKFLOW"]);
+  if (deps.agents) app.route("/", createWorkflowAgentRoutes(deps.agents, async c => c.get("actor") as WorkflowActor));
+  const known = new Set(["GRAPH_CHANGED", "IMMUTABLE_VERSION", "WORKFLOW_NOT_ACTIVE", "WORKFLOW_ARCHIVED", "IDEMPOTENCY_CONFLICT", "RESUME_NOT_ALLOWED", "INVALID_RUN_TRANSITION", "CONFIRMATION_UNAVAILABLE", "CONFIRMATION_MISMATCH", "REVIEW_REQUIRED", "NO_CANDIDATES", "EMPTY_WORKFLOW", "ENS_AGENT_REQUIRED"]);
   app.onError((error, c) => {
     if (error.message === "NOT_FOUND") return c.json({ error: { code: "NOT_FOUND", message: "Workflow not found." } }, 404);
     if (known.has(error.message)) return c.json({ error: { code: error.message, message: planMessages[error.message] ?? "The workflow could not advance. Refresh its current state before retrying." } }, 409);
@@ -103,7 +108,8 @@ export function createWorkflowRoutes(deps: WorkflowApi, authenticate: (c: Contex
     const body = v.parse(CreateWorkflowScheduleRequestSchema, await c.req.json());
     const version = detail.versions.find(v => v.id === body.versionId);
     if (!version) throw new Error("NOT_FOUND");
-    const schedule = { ...createPinnedSchedule(detail.workflow, version, body.definition, new Date()), executionSessionId: c.get("actor").sessionId };
+    const pin = await deps.service.authorityPin(detail.workflow.id, version.id);
+    const schedule = { ...createPinnedSchedule(detail.workflow, version, body.definition, new Date()), executionSessionId: c.get("actor").sessionId, ...pin };
     await deps.store.saveSchedule(schedule);
     return c.json({ schedule }, 201);
   });
@@ -113,6 +119,7 @@ export function createWorkflowRoutes(deps: WorkflowApi, authenticate: (c: Contex
     await deps.service.detail(c.get("actor"), current.workflowId);
     const body = v.parse(UpdateWorkflowScheduleRequestSchema, await c.req.json());
     const next = revisePinnedSchedule(current, { ...(body.definition ? { definition: body.definition } : {}), ...(body.status ? { status: body.status } : {}) }, new Date());
+    if (next.status === "ACTIVE" && !await deps.service.scheduleAuthorized(next)) throw new Error("ENS_AGENT_REQUIRED");
     await deps.store.compareAndSwapSchedule(current, next);
     return c.json({ schedule: next });
   });

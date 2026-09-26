@@ -1,7 +1,8 @@
-import { Database, WorkflowStore, type SessionRecord } from "@humanos/database";
+import { Database, WorkflowStore, WorkflowAgentStore, type SessionRecord } from "@humanos/database";
+import type { WorkflowEnsPort } from "@humanos/ens";
 import { createContentGenerator, createWorkflowSelector } from "@humanos/models";
 import { createDefaultCatalog } from "@humanos/workflows";
-import { hashCanonical, type Workflow, type WorkflowVersion, type WorkflowRun } from "@humanos/schemas";
+import { hashCanonical, type Workflow, type WorkflowVersion, type WorkflowRun, type WorkflowNode } from "@humanos/schemas";
 import * as v from "valibot";
 import { createWorkflowService } from "./service.js";
 import { createWorkflowRunner, WorkflowPause, WorkflowExecutionError } from "./runner.js";
@@ -13,6 +14,9 @@ import { createAuditedRecipeRegistry, createBrowserExecutor, createPlaywrightDri
 import { createBrowserStep } from "./browser-step.js";
 import type { StepExecutionContext, WorkflowExecutor } from "./types.js";
 import type { WorkflowApi } from "./routes.js";
+import { agentCapabilityFor, composeWorkflowAuthorizers, createWorkflowAgentAuthorizer, scheduleAuthorityCurrent } from "./agent-authorizer.js";
+import { createWorkflowAgentReceipts } from "./agent-receipts.js";
+import { createWorkflowAgentService } from "./agents.js";
 
 export function createWorkflowAuthorizer(db: Database, store: WorkflowStore, registry: ReturnType<typeof createDefaultCatalog>, connectors: ConnectorRegistry) {
   return async (context: StepExecutionContext): Promise<boolean> => {
@@ -39,12 +43,16 @@ export function createWorkflowAuthorizer(db: Database, store: WorkflowStore, reg
 }
 import { createWorkflowScheduler } from "./scheduler.js";
 
-export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv): WorkflowApi & { start(signal: AbortSignal): Promise<void> } {
+export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, options: { ens?: WorkflowEnsPort | null } = {}): WorkflowApi & { start(signal: AbortSignal): Promise<void> } {
   const store = new WorkflowStore(db), registry = createDefaultCatalog(), connectors = new ConnectorRegistry();
+  const agentStore = new WorkflowAgentStore(db), ens = options.ens ?? null;
   const owner = env.CONNECTOR_ACCOUNT_ID?.toLowerCase();
   connectors.register(createBraveSearchAdapter({ credentials: async accountId => owner === accountId.toLowerCase() && env.BRAVE_SEARCH_API_KEY ? { apiKey: env.BRAVE_SEARCH_API_KEY } : null }));
   connectors.register(createResendEmailAdapter({ credentials: async accountId => owner === accountId.toLowerCase() && env.RESEND_API_KEY && env.RESEND_FROM_EMAIL ? { apiKey: env.RESEND_API_KEY, from: env.RESEND_FROM_EMAIL } : null }));
-  const authorize = createWorkflowAuthorizer(db, store, registry, connectors);
+  const capabilityForNode = (node: WorkflowNode) => node.type === "connector.call" ? connectors.get(String(node.input.connectorId), String(node.input.operationId))?.operation.capability ?? null : node.capability;
+  // ENS-pinned runs need both the account/lease boundary and live agent authority; neither substitutes for the other.
+  const authorize = composeWorkflowAuthorizers(createWorkflowAuthorizer(db, store, registry, connectors),
+    createWorkflowAgentAuthorizer({ db, ens, capabilityFor: agentCapabilityFor(registry, capabilityForNode) }));
   // Opt-in local driver; a dedicated HumanOS profile, never the user's everyday browser.
   const driverEnabled = env.HUMANOS_BROWSER_DRIVER === "local-chromium";
   const recipes = createAuditedRecipeRegistry();
@@ -92,17 +100,19 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv): Wor
   const routing = { recipes, browserEnabled: driverEnabled };
   const service = createWorkflowService({ db, store, registry, selector: boundedIntentSelector(createWorkflowSelector(models), routing), assemblyInput: async goal => workflowInputs(goal, routing),
     describeGoal: goal => { const intent = classifyWorkflowGoal(goal, routing); return { intent: intent.kind, plannedSteps: [...intent.blocks], ...(intent.recipeId ? { recipeId: intent.recipeId } : {}) }; },
-    capabilityForNode: node => node.type === "connector.call" ? connectors.get(String(node.input.connectorId), String(node.input.operationId))?.operation.capability ?? null : node.capability,
+    capabilityForNode,
   });
   const runner = createWorkflowRunner({ store, registry, content: createContentGenerator(models), workerId: `local-${process.pid}`, authorize, dispatchConfirmed: confirmations.probeApproved,
     executors: { "research.web": external, "connector.call": external, "application.submit": external, "calendar.create": external, "browser.submit": browser.executor, "human.confirm": { execute: confirmations.confirmNode } },
   });
-  const scheduler = createWorkflowScheduler({ store, registry });
+  const scheduler = createWorkflowScheduler({ store, registry, authorityCurrent: (schedule, now) => scheduleAuthorityCurrent(db, schedule, now, ens) });
+  const agents = createWorkflowAgentService({ db, store, agentStore, ens, capabilityForNode });
+  const receipts = ens ? createWorkflowAgentReceipts({ db, agentStore, ens }) : null;
   const connections = (actor: { accountId: string }) => describeWorkflowConnections({
     accountId: actor.accountId, registry: connectors, setup: connectorSetupFromEnv(env), models: !!env.OPENCODE_API_KEY?.trim(),
     browser: describeBrowser(driverEnabled, recipes.list().map(recipe => recipe.label)),
   });
-  return { service, store, confirmations, connections,
+  return { service, store, agents, confirmations, connections,
     ...(env.FLUE_URL && env.FLUE_INTERNAL_SECRET ? { flue: { url: env.FLUE_URL, secret: env.FLUE_INTERNAL_SECRET } } : {}),
-    start: async signal => { await Promise.all([runner.start(signal), scheduler.start(signal)]); } };
+    start: async signal => { await Promise.all([runner.start(signal), scheduler.start(signal), agents.recover(signal), ...(receipts ? [receipts.start(signal)] : [])]); } };
 }

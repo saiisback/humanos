@@ -151,6 +151,10 @@ export const WorkflowVersionSchema = v.strictObject({
 });
 export type WorkflowVersion = v.InferOutput<typeof WorkflowVersionSchema>;
 
+/** Optional for legacy rows; once written, a run/schedule's authority pin never changes. */
+export const WorkflowAuthorityModeSchema = v.picklist(["account", "ens"]);
+export type WorkflowAuthorityMode = v.InferOutput<typeof WorkflowAuthorityModeSchema>;
+
 export const WorkflowRunSchema = v.strictObject({
   id: IdSchema,
   workflowId: IdSchema,
@@ -159,6 +163,8 @@ export const WorkflowRunSchema = v.strictObject({
   triggerKind: v.picklist(["manual", "once", "recurring", "api"]),
   triggerOccurrenceId: v.nullable(IdSchema),
   executionSessionId: v.optional(v.nullable(IdSchema)),
+  authorityMode: v.optional(WorkflowAuthorityModeSchema),
+  agentBindingId: v.optional(v.nullable(IdSchema)),
   inputSnapshot: BoundedPayloadSchema,
   inputHash: HexSchema,
   status: RunStatusSchema,
@@ -274,6 +280,8 @@ export const WorkflowScheduleSchema = v.strictObject({
   workflowId: IdSchema,
   workflowVersionId: IdSchema,
   executionSessionId: v.optional(v.nullable(IdSchema)),
+  authorityMode: v.optional(WorkflowAuthorityModeSchema),
+  agentBindingId: v.optional(v.nullable(IdSchema)),
   definition: v.variant("kind", [
     v.strictObject({ kind: v.literal("once"), fireAt: TimestampSchema, timezone: ShortTextSchema }),
     v.strictObject({ kind: v.literal("recurring"), expression: ShortTextSchema, timezone: ShortTextSchema }),

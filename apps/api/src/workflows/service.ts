@@ -32,6 +32,7 @@ import {
   type Capability,
 } from "@humanos/schemas";
 import type { WorkflowActor } from "./types.js";
+import { resolveAuthorityPin, scheduleAuthorityCurrent } from "./agent-authorizer.js";
 
 export interface WorkflowServiceDependencies {
   db: Database;
@@ -318,6 +319,8 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       );
       if (!version?.activatedAt) throw new Error("WORKFLOW_NOT_ACTIVE");
       validateWorkflowGraph(version.graph, registry);
+      // Once any agent exists this workflow never falls back to account authority.
+      const pin = await resolveAuthorityPin(db, id, version.id, new Date());
       const now = new Date().toISOString(),
         inputHash = hashCanonical(input);
       const run: WorkflowRun = {
@@ -328,6 +331,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         triggerKind: "manual",
         triggerOccurrenceId: null,
         executionSessionId: actor.sessionId ?? null,
+        ...pin,
         inputSnapshot: structuredClone(input),
         inputHash,
         status: "QUEUED",
@@ -376,6 +380,11 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       }
       return runDetail(actor, runId);
     },
+    /** Authority pin for a new schedule; callers must have checked ownership. */
+    authorityPin: (workflowId: string, versionId: string) =>
+      resolveAuthorityPin(db, workflowId, versionId, new Date()),
+    scheduleAuthorized: (schedule: WorkflowSchedule) =>
+      scheduleAuthorityCurrent(db, schedule, new Date()),
     cancel: (actor: WorkflowActor, id: string) =>
       changeRun(actor, id, "CANCELLED"),
     resume: (actor: WorkflowActor, id: string) =>

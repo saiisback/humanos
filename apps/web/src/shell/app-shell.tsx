@@ -28,6 +28,9 @@ export function AppShell({
   workflows,
   onSelectWorkflow,
   connectionsPanel,
+  identityPanel,
+  identityOpen,
+  onIdentityOpenChange,
 }: {
   children: ReactNode;
   composer: ReactNode;
@@ -46,6 +49,11 @@ export function AppShell({
   onSelectWorkflow?: (id: string) => void;
   /** Account-scoped workflow connection panel; replaces configuration-only readiness. */
   connectionsPanel?: ReactNode;
+  /** Workflow agent management; replaces the legacy identity summary. */
+  identityPanel?: ReactNode;
+  /** Controlled identity sheet for deep links and back navigation. */
+  identityOpen?: boolean;
+  onIdentityOpenChange?: (open: boolean) => void;
 }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const [railOpen, setRailOpen] = useState(true);
@@ -54,14 +62,27 @@ export function AppShell({
   function openSheet(next: Sheet) {
     trigger.current = document.activeElement as HTMLElement;
     setSheet(next);
+    if (next === "identity") onIdentityOpenChange?.(true);
   }
   function switchSheet(next: Sheet) {
     setSheet(next);
+    if (next === "identity") onIdentityOpenChange?.(true);
   }
   function closeSheet() {
+    if (sheet === "identity") onIdentityOpenChange?.(false);
     setSheet(null);
     requestAnimationFrame(() => trigger.current?.focus());
   }
+  useEffect(() => {
+    if (identityOpen === undefined) return;
+    if (identityOpen && sheet !== "identity") {
+      trigger.current = document.activeElement as HTMLElement;
+      setSheet("identity");
+    } else if (!identityOpen && sheet === "identity") {
+      setSheet(null);
+      requestAnimationFrame(() => trigger.current?.focus());
+    }
+  }, [identityOpen]);
   useEffect(() => {
     if (!sheet || !dialog.current) return;
     const element = dialog.current;
@@ -103,7 +124,16 @@ export function AppShell({
       </nav>
     </>
   );
-  const identity = (
+  const identity = identityPanel ? (
+    <>
+      {identityPanel}
+      {account && (
+        <button className="secondary agent-signout" disabled={busy} onClick={onSignOut}>
+          Sign out
+        </button>
+      )}
+    </>
+  ) : (
     <>
       <h2>Identity</h2>
       <p>

@@ -23,6 +23,7 @@ import {
   type WorkflowSchedule,
   type WorkflowReceipt,
   type Hex,
+  type WorkflowAgentBinding,
 } from "@humanos/schemas";
 import type { Database, Transaction } from "./index.js";
 
@@ -52,6 +53,22 @@ function tableName(table: WorkflowTable) {
   return table;
 }
 const json = (value: unknown) => JSON.stringify(value);
+type AuthorityPinned = {
+  authorityMode?: "account" | "ens" | undefined;
+  agentBindingId?: string | null | undefined;
+};
+/** Legacy rows have no pin; ENS mode always names exactly one binding. */
+function authorityPin(value: AuthorityPinned) {
+  const mode = value.authorityMode ?? null;
+  const bindingId = value.agentBindingId ?? null;
+  if ((mode === "ens") !== (bindingId !== null)) throw new Error("INVALID_AUTHORITY_PIN");
+  return { mode, bindingId };
+}
+function samePin(a: AuthorityPinned, b: AuthorityPinned) {
+  const x = authorityPin(a);
+  const y = authorityPin(b);
+  return x.mode === y.mode && x.bindingId === y.bindingId;
+}
 export interface WorkflowLease {
   runId: string;
   revision: number;
@@ -274,6 +291,12 @@ export class WorkflowStore {
       )
     ).rows[0]?.data;
     if (!version?.activatedAt) throw new Error("VERSION_NOT_ACTIVE");
+    const pin = authorityPin(run);
+    if (pin.bindingId !== null) {
+      const binding = await this.pinnedBinding(tx, run.workflowId, run.workflowVersionId, pin.bindingId, true);
+      if (binding.state !== "ACTIVE" || Date.parse(binding.expiresAt) <= Date.parse(run.createdAt))
+        throw new Error("AGENT_BINDING_INACTIVE");
+    }
     if (
       run.status !== "QUEUED" ||
       run.revision !== 0 ||
@@ -324,6 +347,23 @@ export class WorkflowStore {
   }
   async createRun(run: WorkflowRun, steps: readonly StepRun[]) {
     await this.db.transaction((tx) => this.insertRun(tx, run, steps));
+  }
+  /** The binding must belong to the same workflow owner and exact version. */
+  private async pinnedBinding(
+    runner: Pick<Transaction, "query">,
+    workflowId: string,
+    versionId: string,
+    bindingId: string,
+    lock: boolean,
+  ): Promise<WorkflowAgentBinding> {
+    const binding = (
+      await runner.query<{ data: WorkflowAgentBinding }>(
+        `SELECT b.data FROM workflow_agent_bindings b JOIN workflows w ON w.id=b.workflow_id AND w.account_id=b.account_id WHERE b.id=$1 AND b.workflow_id=$2 AND b.version_id=$3${lock ? " FOR SHARE OF b" : ""}`,
+        [bindingId, workflowId, versionId],
+      )
+    ).rows[0]?.data;
+    if (!binding) throw new Error("AGENT_BINDING_MISMATCH");
+    return binding;
   }
   async claimNextRun(
     workerId: string,
@@ -409,6 +449,7 @@ export class WorkflowStore {
       next.workflowVersionId !== current.workflowVersionId ||
       next.inputHash !== current.inputHash ||
       hashCanonical(next.inputSnapshot) !== current.inputHash ||
+      !samePin(current, next) ||
       event.runId !== current.id
     )
       throw new Error("IMMUTABLE_RUN_INPUT");
@@ -721,8 +762,11 @@ export class WorkflowStore {
   }
   async saveSchedule(schedule: WorkflowSchedule) {
     v.parse(WorkflowScheduleSchema, schedule);
+    const pin = authorityPin(schedule);
+    if (pin.bindingId !== null)
+      await this.pinnedBinding(this.db, schedule.workflowId, schedule.workflowVersionId, pin.bindingId, false);
     const saved = await this.db.query(
-      "INSERT INTO workflow_schedules(id,workflow_id,version_id,status,next_fire_at,data) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,next_fire_at=EXCLUDED.next_fire_at,data=EXCLUDED.data WHERE workflow_schedules.workflow_id=EXCLUDED.workflow_id AND workflow_schedules.version_id=EXCLUDED.version_id",
+      "INSERT INTO workflow_schedules(id,workflow_id,version_id,status,next_fire_at,data) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,next_fire_at=EXCLUDED.next_fire_at,data=EXCLUDED.data WHERE workflow_schedules.workflow_id=EXCLUDED.workflow_id AND workflow_schedules.version_id=EXCLUDED.version_id AND workflow_schedules.data->>'authorityMode' IS NOT DISTINCT FROM EXCLUDED.data->>'authorityMode' AND workflow_schedules.data->>'agentBindingId' IS NOT DISTINCT FROM EXCLUDED.data->>'agentBindingId'",
       [
         schedule.id,
         schedule.workflowId,
@@ -744,7 +788,8 @@ export class WorkflowStore {
       if (!current || hashCanonical(current) !== hashCanonical(expected) ||
           next.id !== current.id || next.workflowId !== current.workflowId ||
           next.workflowVersionId !== current.workflowVersionId ||
-          next.executionSessionId !== current.executionSessionId)
+          next.executionSessionId !== current.executionSessionId ||
+          !samePin(current, next))
         throw new Error("SCHEDULE_CONFLICT");
       await tx.query("UPDATE workflow_schedules SET status=$2,next_fire_at=$3,data=$4 WHERE id=$1", [
         next.id, next.status, next.nextFireAt, json(next),
@@ -776,7 +821,8 @@ export class WorkflowStore {
         schedule.status !== "ACTIVE" ||
         schedule.nextFireAt !== occurrenceAt ||
         schedule.workflowId !== run.workflowId ||
-        schedule.workflowVersionId !== run.workflowVersionId
+        schedule.workflowVersionId !== run.workflowVersionId ||
+        !samePin(schedule, run)
       )
         throw new Error("SCHEDULE_MISMATCH");
       // Serialize overlap checks across different schedules for the same workflow.

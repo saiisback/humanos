@@ -6,7 +6,9 @@ export function createScheduledRunSnapshot(workflow: Workflow, version: Workflow
       workflow.status !== "ACTIVE" || version.activatedAt === null || schedule.status !== "ACTIVE")
     throw new Error("SCHEDULE_NOT_ACTIVE");
   const occurrenceId = hashCanonical({ scheduleId: schedule.id, occurrenceAt });
-  const runId = hashCanonical({ occurrenceId, versionId: version.id });
+  // A different agent generation is a different run identity; legacy/account ids are unchanged.
+  const agentBindingId = schedule.authorityMode === "ens" ? schedule.agentBindingId ?? null : null;
+  const runId = hashCanonical(agentBindingId ? { occurrenceId, versionId: version.id, agentBindingId } : { occurrenceId, versionId: version.id });
   const inputSnapshot: Record<string, JsonValue> = {};
   const inputHash = hashCanonical(inputSnapshot);
   const run: WorkflowRun = {
@@ -14,6 +16,7 @@ export function createScheduledRunSnapshot(workflow: Workflow, version: Workflow
     missionId: workflow.missionId, triggerKind: schedule.definition.kind,
     triggerOccurrenceId: occurrenceId, inputSnapshot, inputHash, status: "QUEUED",
     executionSessionId: schedule.executionSessionId ?? null,
+    ...(schedule.authorityMode ? { authorityMode: schedule.authorityMode, agentBindingId: schedule.agentBindingId ?? null } : {}),
     pauseReason: null, revision: 0, leaseOwner: null, leaseExpiresAt: null,
     heartbeatAt: null, createdAt, startedAt: null, completedAt: null,
     cancelledAt: null, nextResumeAt: null,

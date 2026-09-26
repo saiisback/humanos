@@ -8,7 +8,7 @@ HumanOS is a local-first workspace for reusable AI-assisted workflows. A user de
 
 The product aims to make everyday automation accessible without paying for an unconstrained model to reason through every operation. Lower cost is a design objective, **not a measured pricing or savings claim**.
 
-> **Development status:** research, drafts and local schedules have completed real-provider runs. Not every generated answer passes factual/source-quality review. Email delivery and production hotel/restaurant booking are not yet verified end to end. ENSv2 contracts and a separate mission identity flow exist, but the current durable workflow workspace does **not** automatically create or execute through an ENS agent. Do not treat the presence of a key, a configured badge, or a completed unit test as proof of live integration.
+> **Development status:** research, drafts and local schedules have completed real-provider runs. Not every generated answer passes factual/source-quality review. Email delivery and production hotel/restaurant booking are not yet verified end to end. Durable workflows now support explicitly enabled, version-bound ENSv2 agents with live execution authorization. Local test evidence is not proof of a live Sepolia deployment. Do not treat a key or configured badge as proof of live integration.
 
 Source: [saiisback/humanos](https://github.com/saiisback/humanos). Start with the [latest fifteen-demo results](docs/demo-results-2026-09-26.md), [verification record](docs/verification.md), and [live-scenario notes](docs/live-scenarios-2026-09-26.md).
 
@@ -39,7 +39,7 @@ Source: [saiisback/humanos](https://github.com/saiisback/humanos). Start with th
 | Browser actions | Optional dedicated local Chromium driver and audited-recipe interface | No production booking recipes ship by default; not control of a user's everyday logged-in browser |
 | Durable execution | Persisted graphs, steps, attempts, outputs and receipts | A completed run can still contain an inadequate answer |
 | Local scheduling | One-time and daily/weekday schedules with timezone support | Requires the local services and valid authorization to remain available |
-| ENSv2 | Sepolia registrar, registry/resolver integration and permission checks in the mission stack | Durable workflow-to-ENS execution binding is not yet integrated |
+| ENSv2 | Workflow agent registration, version-bound permissions, live checks, expiry/revocation and receipt-hash publication | Explicit owner enablement and funded Sepolia configuration required; live workflow-agent validation pending |
 
 The latest test batch produced completed executions for all fifteen saved requests. Several research results were only partial, and earlier source/factual issues remain documented. One-time and recurring scheduling were demonstrated using a draft workflow; the recurring demo was paused afterwards.
 
@@ -122,7 +122,7 @@ These layers answer different questions:
 |---|---|---|
 | JAW / SIWE | Control of an account and authenticated sessions | Human uniqueness, unlimited agent permission |
 | World ID | The selected credential's human assurance | Approval of every future action |
-| ENSv2 | Names, agent hierarchy and scoped onchain roles in the mission stack | Automatic permission to call arbitrary offchain services |
+| ENSv2 | Names, workflow-agent hierarchy, scoped onchain roles and runtime authorization | Automatic permission to call arbitrary offchain services |
 | HumanOS policy | Account ownership, scope, run state and final effect checks | That generated claims are accurate |
 
 The ENSv2 hierarchy is designed as:
@@ -135,7 +135,17 @@ The ENSv2 hierarchy is designed as:
 
 Each agent has its own Permissioned Resolver. Agent grants are limited to the `humanos.status` and `humanos.receipt` text records; agents do not receive registry transfer, renewal, resolver replacement, or administrative roles. Expiry is bounded by the parent hierarchy. See the [contract guide](packages/contracts/README.md) and [ENS adapter guide](packages/ens/README.md) for exact implementation and test boundaries.
 
-**Current integration gap:** `/?identity=1` selects the older mission workspace, not a dedicated agent-management screen. The new workflow UI saves account-owned workflows without mission bindings, and its runtime rejects mission-bound execution. Therefore “No ENS agent linked” is a real missing integration, not a badge to remove or a permission check to bypass. Connecting the two paths requires a backend lifecycle/authorization integration, ownership checks, agent visibility and revocation tests.
+### Enable an ENS workflow agent
+
+1. Select a prepared workflow and open **Identity & permissions** (or **Enable ENS agent** beside the run review). `/?workflow=<id>&identity=1` preserves the workflow instead of switching to legacy missions.
+2. Sign in with the account bound to your verified human root. Review the exact workflow version, graph hash, capability scope, Sepolia network and effective expiry. Default lifetime is 24 hours, clipped to the parent hierarchy.
+3. Confirm registration once. This can submit several operator-funded Sepolia transactions. The panel shows pending status until finalized/latest chain authorization agrees, then exposes the actual name, controller and observed transaction references.
+4. Run the workflow. Each step retains account/session/lease checks and also checks the pinned ENS generation, owner, controller, hierarchy, expiry and capability before dispatch. Registration does **not** approve an email, booking or other external payload; the exact final-action confirmation still applies.
+5. Revoke in the same panel. Local permission is denied immediately, schedules pause, and onchain revocation retries independently. Cancelling an incomplete registration may first reconcile its original journaled transaction before revoking; it never enables local execution during cancellation.
+
+Unbound workflows remain explicitly **account-only** until the owner chooses the ENS upgrade; registration is never automatic. Once a binding exists, failure, expiry or revocation cannot silently restore account-only execution. A replacement requires a new review. Runs and schedules keep their original generation; old schedules do not adopt a replacement automatically. Chain unavailability pauses due ENS schedules without falsely marking the agent revoked.
+
+Only opaque execution receipt hashes are published in the agent resolver. Message bodies, email addresses and booking details remain offchain. Publication retries never repeat the external effect. Derived agent signing keys remain in backend custody; resolver roles allow status/receipt records, not registry administration or wallet spending. See [implementation and verification details](docs/reports/workflow-ens-integration.md).
 
 ## Real-world actions and approval
 
@@ -212,7 +222,7 @@ Tests use real local PostgreSQL, the ENSv2 contracts on Anvil, and clearly label
 
 ## Architecture
 
-The repository currently contains two related paths: a mission/identity stack with World and ENS authorization, and the newer account-owned durable workflow workspace. They must not be described as one fully integrated live execution path yet.
+The repository contains a legacy mission/identity path and the durable workflow workspace. Workflows use their own ENS bindings while reusing the same authorization reader, signer and transaction journal. The integration is locally tested; it is not yet a verified live Sepolia/provider journey.
 
 | Location | Responsibility |
 |---|---|
@@ -239,7 +249,7 @@ The durable workflow model versions are currently `jev-1.13` and `deepseek-v4.1-
 | A QR code opens installation | Confirm the World environment/app combination; staging/simulator flows differ from production |
 | “Configured” but no model response | Provider credit/authentication, timeout, model output validation and backend restart after environment changes |
 | Brave/Resend unavailable | Exact `CONNECTOR_ACCOUNT_ID`, corresponding key and authorized sender |
-| “No ENS agent linked” | Current workflow/mission integration gap described above; a configured registrar does not link every workflow |
+| No ENS agent registered | Open Identity & permissions, select the prepared version and explicitly enable its scoped agent; a configured registrar does not register every workflow |
 | Asked for confirmation again | Check whether the run, payload, destination, account binding or five-minute confirmation window changed |
 | Booking asks for a connection or details | No production recipe is installed by default; do not treat that stop as a successful booking |
 | Schedule does not run | Local service uptime, session validity, timezone, paused state and overlapping executions |

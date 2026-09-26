@@ -42,6 +42,22 @@
 .workflow-schedule { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 16px 0; }
 .workflow-schedule label { display: grid; gap: 6px; font-size: 14px; }
 .workflow-schedule input, .workflow-schedule select { font: inherit; padding: 10px; min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.agent-panel { display: grid; gap: 16px; min-width: 0; }
+.agent-panel dl, .agent-panel dd, .agent-panel li, .agent-summary { min-width: 0; overflow-wrap: anywhere; }
+.agent-panel a { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink); }
+.agent-state { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); min-width: 0; overflow-wrap: anywhere; }
+.agent-state[data-tone="active"] { border-color: var(--ink); }
+.agent-state[data-tone="unavailable"], .agent-state[data-tone="stopped"], .agent-state[data-tone="none"] { background: var(--quiet); }
+.agent-state > strong { display: block; margin-bottom: 8px; }
+.agent-scope, .agent-txs, .agent-list { list-style: none; margin: 0; padding: 0; }
+.agent-scope li { padding: 2px 0; }
+.agent-list li { border-top: 1px solid var(--line); }
+.agent-list li > div, .agent-list a { display: grid; gap: 2px; min-height: 44px; padding: 10px 0; min-width: 0; overflow-wrap: anywhere; text-decoration: none; }
+.agent-list strong { font-weight: 500; }
+.agent-panel details summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
+.agent-link { min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--ink); font-weight: 500; text-decoration: underline; }
+.agent-signout { margin-top: 24px; }
+@media (max-width: 420px) { .agent-panel .workflow-exact { grid-template-columns: minmax(0, 1fr); gap: 2px; } .agent-panel .workflow-exact dd { margin-bottom: 10px; } }
 @media (max-width: 600px) { .workflow-conversation { padding: 12px 0 24px; } .workflow-prompt { max-width: 95%; } .workflow-card h2 { font-size: 20px; } .workflow-confirm { padding: 14px; } .workflow-suggestions { display: grid; width: 100%; } }
 * {
   box-sizing: border-box;

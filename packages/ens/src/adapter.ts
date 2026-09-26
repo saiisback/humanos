@@ -25,6 +25,7 @@ import {
 } from "./register.js";
 import type { TransactionJournal } from "./transaction-journal.js";
 import { nodeOf } from "./resolve.js";
+import { createWorkflowEnsPort } from "./workflow-agent.js";
 
 /** Structural match for apps/api EnsAdapter. */
 export interface EnsAdapter {
@@ -129,6 +130,7 @@ export function createHumanOSEnsAdapter(options: HumanOSEnsAdapterOptions) {
   }
 
   return {
+    workflow: createWorkflowEnsPort(options),
     register,
     revoke,
     readAuthorization: (name: string) => reader.readAgentAuthorization(name),
