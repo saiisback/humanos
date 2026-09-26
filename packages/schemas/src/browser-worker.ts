@@ -149,6 +149,8 @@ export function createBrowserWorkerScope(scope: { accountId: string; runId: stri
   return {
     get revision() { return revision; },
     get sessionId() { return scope.sessionId; },
+    /** The id the next command will carry; a submission permit is bound to it. */
+    get nextActionId() { return nextAction; },
     command<C extends BrowserWorkerCommandName>(name: C, payload: BrowserWorkerPayload<C>): Extract<BrowserWorkerCommand, { command: C }> {
       return v.parse(BrowserWorkerCommandSchema, {
         protocolVersion: BROWSER_WORKER_PROTOCOL_VERSION, ...scope, actionId: nextAction++,

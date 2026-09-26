@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { BrowserUseClientError, createBrowserUseClient } from "../src/workflows/browser-use-client.js";
+import { BrowserUseClientError, browserUseClientFactory, browserUseRuntimeConfig, createBrowserUseClient } from "../src/workflows/browser-use-client.js";
 
 const scope = { accountId: "11155111:0x1111111111111111111111111111111111111111", runId: "run-1" };
 const dir = mkdtempSync(join(tmpdir(), "bus-client-"));
@@ -68,6 +68,16 @@ describe("BrowserUseClient framing and isolation", () => {
     const pending = aborted.request({ command: "observe", payload: {} }, controller.signal);
     controller.abort();
     await expect(pending).rejects.toMatchObject({ code: "ABORTED" });
+  });
+
+  it("is disabled unless the operator opts in and configures every path", () => {
+    const full = { HUMANOS_BROWSER_DRIVER: "browser-use", HUMANOS_BROWSER_WORKER_PYTHON: "/py", HUMANOS_BROWSER_PROFILE_DIR: "/profiles", HUMANOS_BROWSER_CHROMIUM: "/chrome" };
+    expect(browserUseClientFactory({})).toBeNull();
+    expect(browserUseClientFactory({ ...full, HUMANOS_BROWSER_DRIVER: "local-chromium" })).toBeNull();
+    for (const key of ["HUMANOS_BROWSER_WORKER_PYTHON", "HUMANOS_BROWSER_PROFILE_DIR", "HUMANOS_BROWSER_CHROMIUM"] as const)
+      expect(browserUseClientFactory({ ...full, [key]: " " })).toBeNull();
+    expect(browserUseClientFactory(full)).toBeTypeOf("function");
+    expect(browserUseRuntimeConfig(full).headless).toBe(false);
   });
 
   it("reports a missing runtime as unavailable rather than crashing", async () => {

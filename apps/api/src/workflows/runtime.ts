@@ -12,6 +12,9 @@ import { boundedIntentSelector, workflowInputs, classifyWorkflowGoal } from "./b
 import { describeWorkflowConnections, connectorSetupFromEnv, describeBrowser } from "./connection-status.js";
 import { createAuditedRecipeRegistry, createBrowserExecutor, createPlaywrightDriver } from "./browser.js";
 import { createBrowserStep } from "./browser-step.js";
+import { browserUseClientFactory } from "./browser-use-client.js";
+import { createBrowserUsePolicyRegistry } from "./browser-use-policy.js";
+import { browserUseDestination, createBrowserUseStep } from "./browser-use-step.js";
 import type { StepExecutionContext, WorkflowExecutor } from "./types.js";
 import type { WorkflowApi } from "./routes.js";
 import { agentCapabilityFor, composeWorkflowAuthorizers, createWorkflowAgentAuthorizer, scheduleAuthorityCurrent } from "./agent-authorizer.js";
@@ -61,10 +64,15 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
     headless: env.HUMANOS_BROWSER_HEADLESS !== "false",
   }) }) : null;
   let browser: ReturnType<typeof createBrowserStep> | null = null;
+  // Opt-in local Browser Use worker; disabled unless explicitly selected and configured.
+  const browserUseClients = browserUseClientFactory(env);
+  const browserUsePolicies = createBrowserUsePolicyRegistry();
+  let browserUse: ReturnType<typeof createBrowserUseStep> | null = null;
+  const isBrowserUse = (context: StepExecutionContext) => browserUseDestination.test(String(context.input.destination));
   const confirmations = createWorkflowConfirmations({ store,
     requiresConfirmation: type => registry.get(type).requiresConfirmation,
     prepare: async context => {
-      if (context.node.type === "browser.submit") return browser!.prepare(context);
+      if (context.node.type === "browser.submit") return isBrowserUse(context) ? browserUse!.prepare(context) : browser!.prepare(context);
       const route = await routeExternalStep(context, { registry: connectors, authorize });
       if (route.kind === "revoked") throw new WorkflowExecutionError("AUTHORIZATION");
       if (route.kind !== "connector") throw new WorkflowPause("CONNECTION_REQUIRED", route.kind === "connection_required" ? `Connect ${route.label} with ${route.scopes.join(", ")} before preparing this action.` : "Connect an approved service for this action.");
@@ -75,6 +83,8 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
     },
   });
   browser = createBrowserStep({ executor: browserExecutor, recipes, authorize, confirmations });
+  browserUse = createBrowserUseStep({ client: browserUseClients, policies: browserUsePolicies, authorize, confirmations, store });
+  const browserSubmit: WorkflowExecutor = { execute: context => (isBrowserUse(context) ? browserUse! : browser!).executor.execute(context) };
   const external: WorkflowExecutor = { async execute(context) {
     const route = await routeExternalStep(context, { registry: connectors, authorize });
     if (route.kind === "revoked") throw new WorkflowExecutionError("AUTHORIZATION");
@@ -103,7 +113,7 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
     capabilityForNode,
   });
   const runner = createWorkflowRunner({ store, registry, content: createContentGenerator(models), workerId: `local-${process.pid}`, authorize, dispatchConfirmed: confirmations.probeApproved,
-    executors: { "research.web": external, "connector.call": external, "application.submit": external, "calendar.create": external, "browser.submit": browser.executor, "human.confirm": { execute: confirmations.confirmNode } },
+    executors: { "research.web": external, "connector.call": external, "application.submit": external, "calendar.create": external, "browser.submit": browserSubmit, "human.confirm": { execute: confirmations.confirmNode } },
   });
   const scheduler = createWorkflowScheduler({ store, registry, authorityCurrent: (schedule, now) => scheduleAuthorityCurrent(db, schedule, now, ens) });
   const agents = createWorkflowAgentService({ db, store, agentStore, ens, capabilityForNode });

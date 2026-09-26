@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   BROWSER_WORKER_MAX_MESSAGE_BYTES, createBrowserWorkerScope, encodeBrowserWorkerMessage, parseBrowserWorkerResult,
   type BrowserWorkerCommandName, type BrowserWorkerPayload, type BrowserWorkerResult,
@@ -30,8 +31,45 @@ export interface BrowserUseClientOptions {
 export type BrowserUseRequest = { [C in BrowserWorkerCommandName]: { command: C; payload: BrowserWorkerPayload<C> } }[BrowserWorkerCommandName];
 export interface BrowserUseClient {
   readonly sessionId: string;
+  /** Latest observation revision accepted from the worker. */
+  readonly revision: number;
+  /** Action id of the next request (valid while no other request is queued). */
+  readonly nextActionId: number;
   request(command: BrowserUseRequest, signal: AbortSignal): Promise<BrowserWorkerResult>;
   close(): Promise<void>;
+}
+
+/** Location of the Python worker package in this repository. */
+export const BROWSER_WORKER_DIR = fileURLToPath(new URL("../../../browser-worker", import.meta.url));
+
+export interface BrowserUseRuntimeConfig {
+  enabled: boolean;
+  python: string | null;
+  profileRoot: string | null;
+  chromium: string | null;
+  headless: boolean;
+}
+/** Server configuration only: every path comes from the operator's environment, never a request. */
+export function browserUseRuntimeConfig(env: NodeJS.ProcessEnv): BrowserUseRuntimeConfig {
+  const value = (key: string) => env[key]?.trim() || null;
+  return {
+    enabled: env.HUMANOS_BROWSER_DRIVER === "browser-use",
+    python: value("HUMANOS_BROWSER_WORKER_PYTHON"),
+    profileRoot: value("HUMANOS_BROWSER_PROFILE_DIR"),
+    chromium: value("HUMANOS_BROWSER_CHROMIUM"),
+    headless: env.HUMANOS_BROWSER_HEADLESS === "true",
+  };
+}
+/** Null unless the operator opted in and configured every required path. */
+export function browserUseClientFactory(env: NodeJS.ProcessEnv): ((scope: { accountId: string; runId: string }) => BrowserUseClient) | null {
+  const config = browserUseRuntimeConfig(env);
+  if (!config.enabled || !config.python || !config.profileRoot || !config.chromium) return null;
+  return scope => createBrowserUseClient(scope, {
+    command: config.python!, cwd: BROWSER_WORKER_DIR,
+    env: { HUMANOS_BROWSER_PROFILE_ROOT: config.profileRoot!, HUMANOS_BROWSER_CHROMIUM: config.chromium!,
+      // Visible by default so the user can sign in and take over; headless only on request.
+      HUMANOS_BROWSER_HEADLESS: config.headless ? "true" : "false" },
+  });
 }
 
 export function createBrowserUseClient(scope: { accountId: string; runId: string }, options: BrowserUseClientOptions): BrowserUseClient {
@@ -107,6 +145,8 @@ export function createBrowserUseClient(scope: { accountId: string; runId: string
 
   return {
     sessionId,
+    get revision() { return channel.revision; },
+    get nextActionId() { return channel.nextActionId; },
     request(request, signal) {
       // One outstanding request per session: action ids and revisions stay strictly ordered.
       const next = queue.then(() => exchange(request, signal));
