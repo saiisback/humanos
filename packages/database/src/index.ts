@@ -15,6 +15,7 @@ import type {
 import { hashCanonical } from "@humanos/schemas";
 import { tableName, validateEntity, type Table } from "./schema.js";
 export * from "./schema.js";
+export { createMcpStore, type McpStore, type McpConnection } from "./mcp.js";
 export { WorkflowStore, type WorkflowLease } from "./workflows.js";
 export { WorkflowAgentStore, type WorkflowAgentEvidence } from "./workflow-agents.js";
 export { createWorkflowUsageStore, type UsageContext, type UsageRow } from "./workflow-usage.js";
@@ -218,7 +219,7 @@ export class Database extends Repository {
       await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
         this.schema + ":humanos:migrations",
       ]);
-      for (const file of ["0001_initial.sql", "0002_workflows.sql", "0003_workflow_agents.sql", "0004_workflow_agent_jobs.sql", "0005_workflow_usage.sql"]) {
+      for (const file of ["0001_initial.sql", "0002_workflows.sql", "0003_workflow_agents.sql", "0004_workflow_agent_jobs.sql", "0005_workflow_usage.sql", "0006_mcp.sql"]) {
         await tx.query(
           await readFile(
             new URL(`../migrations/${file}`, import.meta.url),

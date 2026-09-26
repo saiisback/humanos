@@ -37,6 +37,7 @@ const short = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 const fields = v.record(short, text);
 const empty = v.strictObject({});
 const receipt = v.strictObject({ receiptId: short });
+const connectorReceipt = v.union([receipt, v.strictObject({ provider: v.literal("linear"), id: short, url: v.pipe(v.string(), v.url()), verified: v.literal(true) })]);
 const defs: BlockDefinition[] = [
   { type: "research.web", version: "1.0.0", executor: "connector", effect: "read", input: v.strictObject({ query: text }), output: v.strictObject({ sources: v.array(v.strictObject({ url: text, title: text, excerpt: text })) }), capability: "web.search", requiresConfirmation: false },
   { type: "extract.structured", version: "1.0.0", executor: "local", effect: "pure", input: v.strictObject({ sourceRef: short, fieldNames: v.array(short) }), output: v.strictObject({ fields }), capability: null, requiresConfirmation: false },
@@ -45,7 +46,7 @@ const defs: BlockDefinition[] = [
   { type: "browser.fill", version: "1.0.0", executor: "browser", effect: "reversible_write", input: v.strictObject({ pageId: short, fields }), output: v.strictObject({ previewHash: short }), capability: "form.save", requiresConfirmation: false },
   { type: "browser.submit", version: "1.0.0", executor: "browser", effect: "irreversible_write", input: v.strictObject({ destination: text, payload: v.record(short, text) }), output: receipt, capability: "application.submit", requiresConfirmation: true },
   { type: "browser.availability", version: "1.0.0", executor: "browser", effect: "read", input: v.strictObject({ destination: text, payload: v.record(short, text) }), output: v.strictObject({ text, booked: v.literal(false) }), capability: "web.search", requiresConfirmation: false },
-  { type: "connector.call", version: "1.0.0", executor: "connector", effect: "irreversible_write", input: v.strictObject({ connectorId: short, operationId: short, arguments: v.record(short, text) }), output: receipt, capability: null, requiresConfirmation: true },
+  { type: "connector.call", version: "1.0.0", executor: "connector", effect: "irreversible_write", input: v.strictObject({ connectorId: short, operationId: short, arguments: v.record(short, text) }), output: connectorReceipt, capability: null, requiresConfirmation: true },
   { type: "content.generate", version: "1.0.0", executor: "content", effect: "pure", input: v.strictObject({ brief: ContentBriefSchema }), output: GeneratedContentSchema, capability: null, requiresConfirmation: false, outputVariants: { text: ["outputSchema", "text"], email: ["outputSchema", "subject", "body"], form_fields: ["outputSchema", "fields"] } },
   { type: "content.transform", version: "1.0.0", executor: "content", effect: "pure", input: v.strictObject({ brief: ContentBriefSchema, sourceRef: short }), output: GeneratedContentSchema, capability: null, requiresConfirmation: false, outputVariants: { text: ["outputSchema", "text"], email: ["outputSchema", "subject", "body"], form_fields: ["outputSchema", "fields"] } },
   { type: "control.wait", version: "1.0.0", executor: "timer", effect: "pure", input: v.strictObject({ until: v.pipe(v.string(), v.isoTimestamp()) }), output: empty, capability: null, requiresConfirmation: false },

@@ -79,10 +79,12 @@ export function createWorkflowAgentService(deps: {
       "workflow_versions",
       versionId,
     );
-    const newest = (await db.query<{ id: string }>(
-      "SELECT id FROM workflow_versions WHERE workflow_id=$1 ORDER BY (data->>'version')::int DESC LIMIT 1",
-      [id],
-    )).rows[0]?.id;
+    const newest = (
+      await db.query<{ id: string }>(
+        "SELECT id FROM workflow_versions WHERE workflow_id=$1 ORDER BY (data->>'version')::int DESC LIMIT 1",
+        [id],
+      )
+    ).rows[0]?.id;
     if (
       workflow.status === "ARCHIVED" ||
       newest !== versionId ||
@@ -299,7 +301,7 @@ export function createWorkflowAgentService(deps: {
           state: string;
           txHashes: string[];
         }>(
-          `SELECT j.run_id AS "runId",j.receipt_hash AS "receiptHash",j.state,j.tx_hashes AS "txHashes"
+          `SELECT j.run_id AS "runId",j.receipt_hash AS "receiptHash",j.state,j.tx_hashes AS "txHashes",j.error_code AS "errorCode",j.attempts
          FROM workflow_agent_receipt_jobs j JOIN workflow_agent_bindings b ON b.id=j.binding_id
          WHERE b.workflow_id=$1 AND b.account_id=$2 ORDER BY j.updated_at DESC,j.id LIMIT 20`,
           [id, actor.accountId],

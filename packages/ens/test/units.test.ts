@@ -23,10 +23,12 @@ import {
 const CONTRACTS = resolve(import.meta.dirname, "../../contracts");
 
 describe("capability bitmap", () => {
-  it("uses the frozen CapabilitySchema order, matching the on-chain 14-bit mask", () => {
+  it("appends Linear without changing the original capability bits", () => {
     expect(CAPABILITY_ORDER).toEqual(CapabilitySchema.options);
-    expect(CAPABILITY_ORDER).toHaveLength(14);
-    expect(encodeCapabilities(CAPABILITY_ORDER)).toBe((1n << 14n) - 1n);
+    expect(CAPABILITY_ORDER).toHaveLength(15);
+    expect(encodeCapabilities(["linear.issue.create"])).toBe(0x4000n);
+    expect(encodeCapabilities(["permissions.change"])).toBe(0x2000n);
+    expect(encodeCapabilities(CAPABILITY_ORDER)).toBe((1n << 15n) - 1n);
   });
 
   it("round-trips and matches the registrar's record encoding", () => {
@@ -46,7 +48,7 @@ describe("capability bitmap", () => {
     expect(() =>
       encodeCapabilities(["documents.read", "wallet.drain"]),
     ).toThrow(CapabilityEncodingError);
-    expect(() => decodeCapabilities(1n << 14n)).toThrow(
+    expect(() => decodeCapabilities(1n << 15n)).toThrow(
       CapabilityEncodingError,
     );
     expect(() => decodeCapabilities(-1n)).toThrow(CapabilityEncodingError);

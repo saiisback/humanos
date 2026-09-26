@@ -177,6 +177,35 @@ it("ends FAILED rather than PUBLISHED after exhausting retries", async () => {
   expect(f.effectsFor(run.id)).toEqual(["research"]);
 });
 
+it("persists a safe funding reason without leaking provider details and clears it after recovery", async () => {
+  const { run } = await completedEnsRun();
+  const receipts = publisher();
+  await receipts.scan();
+  f.port.writeReceipt
+    .mockRejectedValueOnce(
+      Object.assign(new Error("private RPC credential"), {
+        cause: Object.assign(new Error("private transaction details"), {
+          name: "InsufficientFundsError",
+        }),
+      }),
+    )
+    .mockResolvedValueOnce({ txHashes: [TX] });
+  expect(await receipts.publishNext()).toMatchObject({
+    errorCode: "INSUFFICIENT_FUNDS",
+    state: "PENDING",
+  });
+  const detail = await f.db.query(
+    "SELECT error_code FROM workflow_agent_receipt_jobs WHERE run_id=$1",
+    [run.id],
+  );
+  expect(detail.rows).toEqual([{ error_code: "INSUFFICIENT_FUNDS" }]);
+  expect(await receipts.publishNext()).toMatchObject({
+    errorCode: null,
+    state: "PUBLISHED",
+  });
+  expect(f.effectsFor(run.id)).toEqual(["research"]);
+});
+
 it("fences a stale publisher so it cannot overwrite a reclaimed job", async () => {
   const { run } = await completedEnsRun();
   let offset = 0;

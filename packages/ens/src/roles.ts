@@ -3,7 +3,8 @@ import { CapabilitySchema, type Capability } from "@humanos/schemas";
 
 /**
  * Capability bit i is the i-th entry of the frozen CapabilitySchema picklist. The on-chain
- * HumanOSRegistrar enforces the same 14-bit mask, so any drift fails closed on both sides.
+ * Updated HumanOSRegistrar enforces the same 15-bit mask. Original bits 0..13
+ * never move; old deployed registrars reject bit 14 until explicitly migrated.
  */
 export const CAPABILITY_ORDER: readonly Capability[] = CapabilitySchema.options;
 export const CAPABILITY_MASK = (1n << BigInt(CAPABILITY_ORDER.length)) - 1n;

@@ -58,6 +58,8 @@ export interface WorkflowAgentDetailResponse {
     receiptHash: string;
     state: string;
     txHashes: string[];
+    errorCode?: string | null;
+    attempts?: number;
   }>;
 }
 
@@ -270,7 +272,10 @@ export function runGate(
     };
   const { binding, bindings, available } = load.value;
   if (!binding && !bindings.length && requireEns)
-    return { allowed: false, note: "ENS registration is included in task start. Nothing runs without verified agent authority." };
+    return {
+      allowed: false,
+      note: "ENS registration is included in task start. Nothing runs without verified agent authority.",
+    };
   if (!binding && bindings.length === 0)
     return {
       allowed: true,
@@ -533,7 +538,13 @@ function AgentDetail({
     (!binding || terminalStates.has(binding.state));
   return (
     <>
-      {!planReady && <p role="status" className="fine">Prepare an executable workflow before enabling an ENS agent. Missing connectors must be installed first; ENS permissions do not add booking support.</p>}
+      {!planReady && (
+        <p role="status" className="fine">
+          Prepare an executable workflow before enabling an ENS agent. Missing
+          connectors must be installed first; ENS permissions do not add booking
+          support.
+        </p>
+      )}
       {!available && (
         <p role="status" className="fine">
           ENS is unavailable right now. Stored records are shown, nothing is
@@ -574,9 +585,46 @@ function AgentDetail({
           <ul className="agent-txs">
             {load.value.receiptPublications.map((item) => (
               <li key={`${item.runId}:${item.receiptHash}`}>
-                <span>{item.state}</span>
-                <p className="hash">{item.receiptHash}</p>
-                <TxList hashes={item.txHashes} />
+                <strong>
+                  {item.state === "FAILED"
+                    ? "Receipt not published"
+                    : item.state === "PUBLISHED"
+                      ? "PUBLISHED · Receipt recorded on Sepolia"
+                      : "Publishing receipt…"}
+                </strong>
+                {item.state !== "PUBLISHED" && (
+                  <>
+                    <p className="fine">
+                      This is the onchain receipt status, not the task result.
+                      Agent registration is separate. Do not rerun the task to
+                      fix a receipt.
+                    </p>
+                    {(item.state === "FAILED" || item.errorCode) && (
+                      <p className="fine">
+                        {publicationGuidance(item.errorCode)}
+                      </p>
+                    )}
+                    <p className="fine">
+                      {item.attempts ?? 0} attempts ·{" "}
+                      {item.state === "FAILED"
+                        ? "Automatic retries stopped. After the cause is resolved, the operator must recover only this receipt publication."
+                        : "Receipt-only retries are automatic; your task is not executed again."}
+                    </p>
+                  </>
+                )}
+                <details>
+                  <summary>Receipt details</summary>
+                  <p className="fine">Receipt hash (not a transaction ID)</p>
+                  <p className="hash">{item.receiptHash}</p>
+                  {item.txHashes.length ? (
+                    <TxList hashes={item.txHashes} />
+                  ) : (
+                    <p className="fine">
+                      No publication transaction recorded. This does not prove
+                      no transaction was broadcast; reconcile before retrying.
+                    </p>
+                  )}
+                </details>
               </li>
             ))}
           </ul>
@@ -675,6 +723,23 @@ function AgentDetail({
       )}
     </>
   );
+}
+
+function publicationGuidance(code?: string | null): string {
+  switch (code) {
+    case "INSUFFICIENT_FUNDS":
+      return "The agent needs Sepolia ETH to pay the receipt transaction fee. The operator must fund this agent’s address before recovering publication.";
+    case "AUTHORITY_INVALID":
+      return "The agent’s authority is missing, expired, revoked or no longer matches. The operator must inspect the binding; do not bypass its permissions.";
+    case "TRANSACTION_REVERTED":
+      return "Sepolia rejected the receipt transaction. The operator must inspect the resolver permissions and transaction before recovery.";
+    case "PUBLICATION_INTERRUPTED":
+      return "The publication worker stopped before confirming a result. The operator must reconcile its transaction journal before recovery.";
+    case "PUBLICATION_UNAVAILABLE":
+      return "The network or receipt publisher could not confirm publication. The operator must check connectivity and the transaction journal.";
+    default:
+      return "The original error was not recorded. The operator must check agent gas, permissions and the transaction journal before recovering this receipt.";
+  }
 }
 function AgentList({
   load,

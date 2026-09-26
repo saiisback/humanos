@@ -435,8 +435,8 @@ contract HumanOSRegistrarTest is ENSv2HierarchyFixture {
 
         vm.expectRevert(abi.encodeWithSelector(HumanOSRegistrar.InvalidCapabilities.selector, 0));
         registrar.registerAgent(rootNode, "task", agent, 0, exp);
-        vm.expectRevert(abi.encodeWithSelector(HumanOSRegistrar.InvalidCapabilities.selector, 1 << 14));
-        registrar.registerAgent(rootNode, "task", agent, 1 << 14, exp);
+        vm.expectRevert(abi.encodeWithSelector(HumanOSRegistrar.InvalidCapabilities.selector, 1 << 15));
+        registrar.registerAgent(rootNode, "task", agent, 1 << 15, exp);
         vm.expectRevert(HumanOSRegistrar.InvalidAccount.selector);
         registrar.registerAgent(rootNode, "task", address(0), CAPS, exp);
         vm.expectRevert(abi.encodeWithSelector(HumanOSRegistrar.UnknownRoot.selector, bytes32(uint256(1))));
@@ -448,8 +448,15 @@ contract HumanOSRegistrarTest is ENSv2HierarchyFixture {
         vm.stopPrank();
     }
 
+    function test_registerLinearCapabilityWithoutChangingLegacyBits() external {
+        bytes32 rootNode = _root(uint64(block.timestamp) + YEAR);
+        vm.prank(operator);
+        registrar.registerAgent(rootNode, "linear", agent, 1 << 14, uint64(block.timestamp) + 1 days);
+        assertEq(registrar.CAPABILITY_MASK(), (1 << 15) - 1);
+    }
+
     function testFuzz_capabilitiesOutsideClosedSetRejected(uint256 caps) external {
-        vm.assume(caps >> 14 != 0);
+        vm.assume(caps >> 15 != 0);
         bytes32 rootNode = _root(uint64(block.timestamp) + YEAR);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(HumanOSRegistrar.InvalidCapabilities.selector, caps));

@@ -11,8 +11,13 @@ export function assertEndpoint(provider: string): string {
   return endpoint;
 }
 
-export interface ReviewedTool { name: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown> | undefined }
-export function assertToolContract(expected: ReviewedTool, actual: ReviewedTool): void {
+export interface ToolSchema { name: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown> | undefined }
+export type ReviewedTool = ToolSchema | { name: string; schemaHash: string };
+export function assertToolContract(expected: ReviewedTool, actual: ToolSchema): void {
+  if ("schemaHash" in expected) {
+    if (expected.name !== actual.name || expected.schemaHash !== hashCanonical({ input: actual.inputSchema, output: actual.outputSchema ?? null })) throw new Error("MCP_SCHEMA_CHANGED");
+    return;
+  }
   if (expected.name !== actual.name || hashCanonical(expected.inputSchema) !== hashCanonical(actual.inputSchema) ||
       hashCanonical(expected.outputSchema ?? null) !== hashCanonical(actual.outputSchema ?? null)) {
     throw new Error("MCP_SCHEMA_CHANGED");

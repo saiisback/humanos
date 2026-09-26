@@ -4,7 +4,7 @@ import type { BrowserRecipe, BrowserRecipeRegistry } from "./browser.js";
 import type { BrowserUsePolicyRegistry } from "./browser-use-policy.js";
 import { browserUseBookingPlan, parseBookingRequest, type BookingKey } from "./booking-request.js";
 interface Intent {
-  kind: "draft" | "research" | "email" | "booking" | "availability" | "clarify";
+  kind: "draft" | "research" | "email" | "linear" | "booking" | "availability" | "clarify";
   blocks: BlockType[];
   recipient?: string;
   prompt?: string;
@@ -129,6 +129,11 @@ export function classifyWorkflowGoal(goal: string, context: GoalRoutingContext =
   // ("login works", "do not publish") do not grant external capabilities.
   if (draftOnly && /^(?:please\s+)?(?:draft|write|rewrite|compose|translate|summari[sz]e)\b/.test(lower.trim()))
     return { kind: "draft", blocks: ["content.generate"] };
+  if (/\blinear\b/.test(lower) && /\bissues?\b/.test(lower)) {
+    if (!draftOnly && /^(?:please\s+)?(?:create|make|add)\s+(?:a|an|one)\s+linear issue\b[\s:—-]+\S[\s\S]+/.test(lower.trim()))
+      return { kind: "linear", blocks: ["content.generate", "human.confirm", "connector.call"] };
+    return clarify("HumanOS can create one Linear issue at a time in the team selected in Connections. Say ‘Create a Linear issue: …’ with its purpose. Updates, assignment and deletion are not supported.");
+  }
   const negatedBooking = /\b(do not|don't|dont|without) (book(?:ing)?|reserv(?:e|ing)|pay(?:ing)?|buy(?:ing)?)\b/.test(lower);
   // Restaurant preparation carries private guest data. It must not fall through
   // to either email sending or an unredacted public-search query.
@@ -166,6 +171,14 @@ export function classifyWorkflowGoal(goal: string, context: GoalRoutingContext =
 }
 export function workflowInputs(goal: string, context: GoalRoutingContext = {}): Omit<AssemblyInput, "goal" | "draft"> {
   const intent = classifyWorkflowGoal(goal, context);
+  if (intent.kind === "linear") return {
+    completionSequence: intent.blocks, allowedCapabilities: ["linear.issue.create"], browserFallbackAllowed: false,
+    inputs: {
+      "content.generate": { value: { brief: { instruction: `Draft one Linear issue from this request. Use the subject field for the issue title and body for the issue description. Do not write an email or invent facts. Request: ${goal}`, context: {}, outputSchema: "email", maxCharacters: 8000 } } },
+      "human.confirm": { value: {} },
+      "connector.call": { value: { connectorId: "linear", operationId: "linear.issue.create", arguments: { title: { $ref: "assembly_node_1.subject" }, body: { $ref: "assembly_node_1.body" } } } },
+    },
+  };
   if (intent.kind === "clarify") return { completionSequence: intent.blocks, allowedCapabilities: [], inputs: { "human.input": { value: { prompt: intent.prompt! } } } };
   if (intent.kind === "availability") return { completionSequence: intent.blocks, allowedCapabilities: ["web.search"], browserFallbackAllowed: true, unsupportedExternalEffect: true,
     inputs: { "browser.availability": { value: { destination: intent.destination!, payload: { ...intent.fields! } } } } };

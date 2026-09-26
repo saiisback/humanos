@@ -7,7 +7,25 @@ import {
 } from "@humanos/schemas";
 
 const HASH = /^0x[0-9a-f]{64}$/;
-const COLUMNS = "id,binding_id,run_id,receipt_hash,state,attempts,tx_hashes";
+const COLUMNS =
+  "id,binding_id,run_id,receipt_hash,state,attempts,tx_hashes,error_code";
+/** Persist only allowlisted categories, never provider messages, RPC URLs or signed payloads. */
+function safePublicationError(error: unknown): string {
+  let fallback = "PUBLICATION_UNAVAILABLE";
+  for (
+    let depth = 0;
+    error && typeof error === "object" && depth < 8;
+    depth++
+  ) {
+    const e = error as { name?: string; code?: string; cause?: unknown };
+    if (e.name === "InsufficientFundsError") return "INSUFFICIENT_FUNDS";
+    if (e.code === "REVERTED") fallback = "TRANSACTION_REVERTED";
+    if (e.code === "CONFLICT" || e.code === "INVALID_INPUT")
+      fallback = "AUTHORITY_INVALID";
+    error = e.cause;
+  }
+  return fallback;
+}
 export type ReceiptJobState = "PENDING" | "PUBLISHING" | "PUBLISHED" | "FAILED";
 export interface WorkflowAgentReceiptJob {
   id: string;
@@ -17,6 +35,7 @@ export interface WorkflowAgentReceiptJob {
   state: ReceiptJobState;
   attempts: number;
   txHashes: Hex[];
+  errorCode: string | null;
 }
 type JobRow = {
   id: string;
@@ -26,6 +45,7 @@ type JobRow = {
   state: ReceiptJobState;
   attempts: number;
   tx_hashes: Hex[];
+  error_code: string | null;
 };
 const toJob = (row: JobRow): WorkflowAgentReceiptJob => ({
   id: row.id,
@@ -35,6 +55,7 @@ const toJob = (row: JobRow): WorkflowAgentReceiptJob => ({
   state: row.state,
   attempts: row.attempts,
   txHashes: row.tx_hashes,
+  errorCode: row.error_code,
 });
 
 export interface WorkflowAgentReceiptDependencies {
@@ -137,13 +158,21 @@ export function createWorkflowAgentReceipts(
     job: WorkflowAgentReceiptJob,
     state: ReceiptJobState,
     txHashes: Hex[],
+    errorCode: string | null = null,
   ): Promise<WorkflowAgentReceiptJob | null> {
     const row = (
       await db.query<JobRow>(
-        `UPDATE workflow_agent_receipt_jobs SET state=$3::text,updated_at=$5,
+        `UPDATE workflow_agent_receipt_jobs SET state=$3::text,updated_at=$5,error_code=$6,
          tx_hashes=CASE WHEN $3::text='PUBLISHED' THEN $4::jsonb ELSE tx_hashes END
        WHERE id=$1 AND state='PUBLISHING' AND attempts=$2 RETURNING ${COLUMNS}`,
-        [job.id, job.attempts, state, JSON.stringify(txHashes), clock()],
+        [
+          job.id,
+          job.attempts,
+          state,
+          JSON.stringify(txHashes),
+          clock(),
+          errorCode,
+        ],
       )
     ).rows[0];
     return row ? toJob(row) : null;
@@ -152,7 +181,7 @@ export function createWorkflowAgentReceipts(
     const now = clock();
     // A crashed publisher at its final attempt leaves no evidence of publication.
     await db.query(
-      `UPDATE workflow_agent_receipt_jobs SET state='FAILED',updated_at=$1
+      `UPDATE workflow_agent_receipt_jobs SET state='FAILED',updated_at=$1,error_code='PUBLICATION_INTERRUPTED'
        WHERE state='PUBLISHING' AND attempts>=$2 AND updated_at<=$1::timestamptz-$3::double precision*interval '1 millisecond'`,
       [now, maxAttempts, leaseMs],
     );
@@ -178,17 +207,18 @@ export function createWorkflowAgentReceipts(
       !binding.ensName ||
       Date.parse(binding.expiresAt) <= clock().getTime()
     )
-      return settle(job, "FAILED", []);
+      return settle(job, "FAILED", [], "AUTHORITY_INVALID");
     try {
       const { txHashes } = await ens.writeReceipt(binding, job.receiptHash);
       if (!txHashes.every((hash) => HASH.test(hash)))
         throw new Error("INVALID_TX_EVIDENCE");
       return await settle(job, "PUBLISHED", txHashes);
-    } catch {
+    } catch (error) {
       return settle(
         job,
         job.attempts >= maxAttempts ? "FAILED" : "PENDING",
         [],
+        safePublicationError(error),
       );
     }
   }

@@ -35,6 +35,7 @@ export const CapabilitySchema = v.picklist([
   "message.sign",
   "account.recover",
   "permissions.change",
+  "linear.issue.create",
 ]);
 export type Capability = v.InferOutput<typeof CapabilitySchema>;
 export const RiskLevelSchema = v.picklist([

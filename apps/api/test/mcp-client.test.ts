@@ -12,6 +12,7 @@ describe("MCP trust boundary (synthetic fixtures, not provider acceptance)", () 
     expect(() => assertToolContract({ name: "fixture-create", inputSchema: schema }, { name: "fixture-create", inputSchema: schema })).not.toThrow();
     expect(() => assertToolContract({ name: "fixture-create", inputSchema: schema }, { name: "fixture-create", inputSchema: { type: "object" } })).toThrow("MCP_SCHEMA_CHANGED");
     expect(() => assertToolContract({ name: "fixture-create", inputSchema: schema }, { name: "delete", inputSchema: schema })).toThrow("MCP_SCHEMA_CHANGED");
+    expect(() => assertToolContract({ name: "fixture-create", schemaHash: "0xwrong" }, { name: "fixture-create", inputSchema: schema })).toThrow("MCP_SCHEMA_CHANGED");
   });
   it("rejectsToolErrorAndOversizedResponse", () => {
     expect(() => decodeResult({ isError: true, content: [{ type: "text", text: "secret provider detail" }] })).toThrow("MCP_TOOL_ERROR");

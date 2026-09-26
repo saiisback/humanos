@@ -14,6 +14,7 @@ import type { createWorkflowAgentService } from "./agents.js";
 import { createWorkflowAgentRoutes } from "./agent-routes.js";
 import type { WorkflowActor } from "./types.js";
 export interface WorkflowApi {
+  linear?: ReturnType<typeof import("./mcp/linear.js").createLinearService>;
   service: ReturnType<typeof createWorkflowService>;
   store: WorkflowStore;
   agents?: ReturnType<typeof createWorkflowAgentService>;
@@ -38,6 +39,19 @@ export function createWorkflowRoutes(deps: WorkflowApi, authenticate: (c: Contex
     throw error;
   });
   app.get("/workflows", c => deps.service.list(c.get("actor")).then(value => c.json(value)));
+  app.get("/workflow-linear/destinations", async c => {
+    try { if (!deps.linear) throw new Error(); return c.json(await deps.linear.destinations(c.get("actor").accountId)); }
+    catch { return c.json({ error: { code: "LINEAR_SETUP_REQUIRED", message: "Linear access could not be verified. Check the server key and account binding." } }, 409); }
+  });
+  app.post("/workflow-linear/select", async c => {
+    const body = v.parse(v.strictObject({ destinationId: v.pipe(v.string(), v.minLength(1), v.maxLength(256)) }), await c.req.json());
+    try { if (!deps.linear) throw new Error(); return c.json(await deps.linear.select(c.get("actor").accountId, body.destinationId)); }
+    catch { return c.json({ error: { code: "LINEAR_SETUP_REQUIRED", message: "This Linear team could not be connected. No issue was created." } }, 409); }
+  });
+  app.post("/workflow-linear/disconnect", async c => {
+    v.parse(v.strictObject({}), await c.req.json());
+    await deps.linear?.disconnect(c.get("actor").accountId); return c.json({ disconnected: true });
+  });
   app.get("/workflow-connections", async c => deps.connections
     ? c.json(await deps.connections(c.get("actor")))
     : c.json({ error: { code: "UNAVAILABLE", message: "Connection status is unavailable; no service is assumed connected." } }, 503));

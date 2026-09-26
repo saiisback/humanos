@@ -16,4 +16,5 @@ CREATE TABLE IF NOT EXISTS workflow_agent_receipt_jobs (
 );
 -- Upgrade an already-running development database as well as a fresh install.
 ALTER TABLE workflow_agent_receipt_jobs ADD COLUMN IF NOT EXISTS source_receipt_id text REFERENCES workflow_receipts(id);
+ALTER TABLE workflow_agent_receipt_jobs ADD COLUMN IF NOT EXISTS error_code text;
 CREATE UNIQUE INDEX IF NOT EXISTS workflow_agent_receipt_source ON workflow_agent_receipt_jobs(source_receipt_id) WHERE source_receipt_id IS NOT NULL;

@@ -21,6 +21,8 @@ export function ConfirmationPreview({ value }: { value: JsonValue }) {
   if (!prepared || typeof prepared.destination !== "string" || !payload) return <OutputView value={value} />;
   return <dl className="workflow-exact">
     <dt>Destination</dt><dd className="hash">{prepared.destination}</dd>
+    {typeof binding?.workspace === "string" && <><dt>Workspace</dt><dd>{binding.workspace}</dd></>}
+    {typeof binding?.team === "string" && <><dt>Linear team</dt><dd>{binding.team}</dd></>}
     {typeof binding?.sender === "string" && <><dt>Sent as</dt><dd className="hash">{binding.sender}</dd></>}
     {args ? Object.entries(args).map(([key, entry]) => <React.Fragment key={key}><dt>{key}</dt><dd className="workflow-output">{typeof entry === "string" ? entry : JSON.stringify(entry)}</dd></React.Fragment>)
       : <><dt>Payload</dt><dd><OutputView value={payload} /></dd></>}
@@ -33,6 +35,13 @@ export function ConfirmationPreview({ value }: { value: JsonValue }) {
 }
 export function OutputView({ value }: { value: JsonValue }) {
   if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (value.provider === "linear" && value.verified === true && typeof value.url === "string") {
+      try {
+        const url = new URL(value.url);
+        if (url.protocol === "https:" && url.hostname === "linear.app" && !url.username && !url.password && !url.port)
+          return <p>Linear issue created and verified: <a href={url.href} target="_blank" rel="noopener noreferrer">{String(value.id)}</a></p>;
+      } catch { /* Untrusted output falls back to inert text. */ }
+    }
     if (typeof value.text === "string") return <div className="workflow-output">{value.text}</div>;
     if (typeof value.body === "string") return <div className="workflow-output">{typeof value.subject === "string" && <h3>{value.subject}</h3>}{value.body}</div>;
     if (Array.isArray(value.sources)) return <ul className="workflow-sources">{value.sources.map((source, index) => {

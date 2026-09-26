@@ -6,6 +6,7 @@ import {
 import { createDefaultCatalog, type EffectClass } from "@humanos/workflows";
 import { validateEffectResult, type EffectAction, type EffectResult } from "@humanos/tools";
 import type { StepExecutionContext, StepExecutionResult } from "./types.js";
+import { linearOperation } from "./mcp/operations.js";
 
 export interface ConnectorOperation {
   readonly id: string;
@@ -30,6 +31,8 @@ export interface ConnectorExecutionInput {
   readonly binding: Record<string, JsonValue>;
   readonly idempotencyKey: string;
   readonly signal: AbortSignal;
+  /** Final full workflow authority check, including account session and ENS state. */
+  readonly authorize?: () => Promise<boolean>;
 }
 export interface ConnectorAdapter {
   readonly id: string;
@@ -55,6 +58,10 @@ function providerStatusError(status: number, write: boolean): ConnectorProviderE
 const catalog = createDefaultCatalog();
 function assertAuditedOperation(adapter: ConnectorAdapter, operation: ConnectorOperation): void {
   if (operation.blockType === "connector.call") {
+    if (adapter.id === "linear" && operation.id === linearOperation.id) {
+      if (operation.capability !== linearOperation.capability || operation.effect !== linearOperation.effect || operation.input !== linearOperation.input || operation.output !== linearOperation.output) throw new Error("OPERATION_POLICY_MISMATCH");
+      return;
+    }
     if (adapter.id !== "resend" || operation.id !== "email.send" || operation.capability !== "email.send" ||
         operation.effect !== "irreversible_write" || operation.input !== emailInput || operation.output !== emailOutput)
       throw new Error("OPERATION_POLICY_MISMATCH");
@@ -71,7 +78,7 @@ type Registered = { adapter: ConnectorAdapter; operation: ConnectorOperation };
 function auditedSnapshot(adapter: ConnectorAdapter): ConnectorAdapter {
   const operations = Object.freeze(adapter.operations.map((operation): ConnectorOperation => {
     const audited = operation.blockType === "connector.call"
-      ? { input: emailInput, output: emailOutput }
+      ? adapter.id === "linear" ? linearOperation : { input: emailInput, output: emailOutput }
       : catalog.get(operation.blockType);
     return Object.freeze({
       id: operation.id, blockType: operation.blockType, capability: operation.capability,
@@ -226,6 +233,7 @@ export async function dispatchConnectorStep(context: StepExecutionContext, route
   const result = validateResult(found.operation, await found.adapter.execute({
     accountId: context.actor.accountId, operationId: found.operation.id,
     input: structuredClone(input), binding: structuredClone(binding), idempotencyKey: context.idempotencyKey, signal: context.signal,
+    authorize: () => deps.authorize(context),
   }));
   return { output: result.output, receipt: receiptFor(context, found.operation, found.adapter.id, input, result, deps.clock ?? (() => new Date())) };
 }

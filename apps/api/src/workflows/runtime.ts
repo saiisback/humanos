@@ -1,4 +1,5 @@
-import { Database, WorkflowStore, WorkflowAgentStore, type SessionRecord } from "@humanos/database";
+import { Database, WorkflowStore, WorkflowAgentStore, createMcpStore, type SessionRecord } from "@humanos/database";
+import { createLinearService } from "./mcp/linear.js";
 import type { WorkflowEnsPort } from "@humanos/ens";
 import { createBrowserActionSelector, createContentGenerator, createWorkflowSelector } from "@humanos/models";
 import { createDefaultCatalog } from "@humanos/workflows";
@@ -55,6 +56,8 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
   const usage = createUsageContext((context, event) => usageStore.upsertAttempt(context, { ...event, pricingDate: PRICING_DATE }));
   const agentStore = new WorkflowAgentStore(db), ens = options.ens ?? null;
   const owner = env.CONNECTOR_ACCOUNT_ID?.toLowerCase();
+  const linear = createLinearService({ store: createMcpStore(db), token: accountId => owner === accountId.toLowerCase() ? env.LINEAR_API_KEY?.trim() || null : null });
+  connectors.register(linear.adapter);
   connectors.register(createBraveSearchAdapter({ credentials: async accountId => owner === accountId.toLowerCase() && env.BRAVE_SEARCH_API_KEY ? { apiKey: env.BRAVE_SEARCH_API_KEY } : null }));
   connectors.register(createResendEmailAdapter({ credentials: async accountId => owner === accountId.toLowerCase() && env.RESEND_API_KEY && env.RESEND_FROM_EMAIL ? { apiKey: env.RESEND_API_KEY, from: env.RESEND_FROM_EMAIL } : null }));
   const capabilityForNode = (node: WorkflowNode) => node.type === "connector.call" ? connectors.get(String(node.input.connectorId), String(node.input.operationId))?.operation.capability ?? null : node.capability;
@@ -137,7 +140,7 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
           siteLabels: browserUsePolicies.list().filter(p => !p.fixtureOnly).map(p => p.label), workerVerified: false, authority: "account" })
       : describeBrowser(driverEnabled, recipes.list().map(recipe => recipe.label)),
   });
-  return { service, store, agents, confirmations, connections,
+  return { service, store, agents, confirmations, connections, linear,
     ...(env.FLUE_URL && env.FLUE_INTERNAL_SECRET ? { flue: { url: env.FLUE_URL, secret: env.FLUE_INTERNAL_SECRET } } : {}),
     start: async signal => { await Promise.all([runner.start(signal), scheduler.start(signal), agents.recover(signal), ...(receipts ? [receipts.start(signal)] : [])]); } };
 }

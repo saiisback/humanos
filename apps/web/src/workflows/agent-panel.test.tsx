@@ -66,15 +66,51 @@ const review: WorkflowAgentReview = {
   accountId,
 };
 const noop = () => {};
+it("explains receipt failure separately from task execution, with safe recovery guidance", () => {
+  const html = view({
+    load: ready({
+      binding,
+      bindings: [binding],
+      receiptPublications: [
+        {
+          runId: "run-1",
+          receiptHash: tx,
+          state: "FAILED",
+          txHashes: [],
+          errorCode: "INSUFFICIENT_FUNDS",
+          attempts: 8,
+        },
+      ],
+    }),
+  });
+  expect(html).toContain("Receipt not published");
+  expect(html).toContain("Sepolia ETH");
+  expect(html).toContain("Do not rerun the task");
+  expect(html).toContain("8 attempts");
+  expect(html).not.toContain("None recorded");
+});
+it("does not invent a cause for older failures without diagnostics", () => {
+  const html = view({
+    load: ready({
+      receiptPublications: [
+        { runId: "run-1", receiptHash: tx, state: "FAILED", txHashes: [] },
+      ],
+    }),
+  });
+  expect(html).toContain("The original error was not recorded");
+});
 it("does not describe an ENS-required task as account-owned before registration", () => {
   expect(runGate(ready(), "v-2", now, true)).toMatchObject({
-    allowed: false, note: expect.stringContaining("task start"),
+    allowed: false,
+    note: expect.stringContaining("task start"),
   });
 });
 it("does not offer agent registration for an unprepared empty workflow", () => {
   const html = view({ planReady: false });
   expect(html).not.toContain("Enable ENS agent");
-  expect(html).toContain("Prepare an executable workflow before enabling an ENS agent");
+  expect(html).toContain(
+    "Prepare an executable workflow before enabling an ENS agent",
+  );
 });
 it("shows recorded receipt publication evidence separately from registration", () => {
   const html = view({

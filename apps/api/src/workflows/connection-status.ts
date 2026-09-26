@@ -18,6 +18,11 @@ export interface BrowserConnectionStatus {
 export function connectorSetupFromEnv(env: Record<string, string | undefined>): Record<string, ConnectorSetup> {
   const present = (name: string) => !!env[name]?.trim();
   return {
+    linear: {
+      configured: present("LINEAR_API_KEY") && present("CONNECTOR_ACCOUNT_ID"),
+      detail: "Create one Linear issue after your exact confirmation. Choose a team below; verified results include the real issue link.",
+      requirement: "Set LINEAR_API_KEY and CONNECTOR_ACCOUNT_ID privately on the server, then choose a team in HumanOS.",
+    },
     brave: {
       configured: present("BRAVE_SEARCH_API_KEY") && present("CONNECTOR_ACCOUNT_ID"),
       detail: "Real web search for research steps. Results are sources to read, not verified availability.",
@@ -99,10 +104,10 @@ export async function describeWorkflowConnections(input: {
       capabilities: [...new Set(adapter.operations.map(op => op.capability))],
       status: connected ? "connected" : setup?.configured ? "not_connected" : "setup_required",
       detail: setup?.detail ?? adapter.operations.map(op => op.summary).join(", "),
-      setup: connected ? null : setup?.configured
+      setup: connected ? null : adapter.id === "linear" && setup?.configured ? "Choose a Linear team below. If access fails, verify the key and account binding on the server." : setup?.configured
         ? `Server credentials are not bound to this account. Set CONNECTOR_ACCOUNT_ID to ${input.accountId} on the server to use them.`
         : setup?.requirement ?? "This service needs server configuration.",
-      publicIdentity: sender,
+      publicIdentity: adapter.id === "linear" && typeof binding?.team === "string" ? `${String(binding.workspace)} / ${binding.team}` : sender,
     });
   }
   connections.push({

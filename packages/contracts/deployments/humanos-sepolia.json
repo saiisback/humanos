@@ -1,26 +1,26 @@
 {
   "network": "sepolia",
   "chainId": 11155111,
-  "recordedAt": "2026-09-26T16:47:47.010Z",
+  "recordedAt": "2026-09-26T21:54:25.084Z",
   "officialEnsv2": "deployments/ensv2-sepolia.json",
-  "registrar": "0xfbb257d36b4f4e14372bbb49645e2ce815a9346a",
-  "humanosRegistry": "0x41dd4257fac9bdffe71d6d25420c8bcdf3bdfc42",
+  "registrar": "0x03544810e852482aa6406aba668c1d4ccdf0aca2",
+  "humanosRegistry": "0xdf6b9d43b1d2e6b7a4aa537d77ebb02dc841d851",
   "transactions": [
     {
-      "hash": "0xa73b6e1e948805e96f208cd6d5bd6cd0ae7c8731e37f725a25bab2708f08d8b9",
+      "hash": "0xc292a385152224df17e8aea0b65f13b765407bef96b27851d86f08fd11debadd",
       "type": "CREATE",
       "contractName": "HumanOSRegistrar",
-      "contractAddress": "0xfbb257d36b4f4e14372bbb49645e2ce815a9346a",
+      "contractAddress": "0x03544810e852482aa6406aba668c1d4ccdf0aca2",
       "function": null,
-      "blockNumber": 11787458
+      "blockNumber": 11788981
     },
     {
-      "hash": "0xe8533b652143cd61de2c657e71c8b5179e55f5095fa224bdafe4bb8caf10bd66",
+      "hash": "0x7b5203d3a3362e6ec5c4abbd14242a8930ad84c988734c0fcc775c6877707fa9",
       "type": "CALL",
       "contractName": null,
       "contractAddress": "0x657ea849311d3d5823348dded7c2aaafb3ede09e",
       "function": "setSubregistry(uint256,address)",
-      "blockNumber": 11787458
+      "blockNumber": 11788981
     }
   ]
 }

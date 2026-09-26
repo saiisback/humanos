@@ -105,8 +105,8 @@ contract HumanOSRegistrar is Ownable2Step {
     // Constants
     ////////////////////////////////////////////////////////////////////////
 
-    /// @dev Bit i = i-th entry of @humanos/schemas CapabilitySchema (14 closed capabilities).
-    uint256 public constant CAPABILITY_MASK = (1 << 14) - 1;
+    /// @dev Original bits 0..13 are unchanged; bit 14 permits Linear issue creation.
+    uint256 public constant CAPABILITY_MASK = (1 << 15) - 1;
     uint256 public constant MAX_AGENTS_PER_ROOT = 64;
     uint256 public constant MAX_ROOT_ID_LENGTH = 256;
 
