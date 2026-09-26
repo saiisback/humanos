@@ -1,6 +1,6 @@
 import { Database, WorkflowStore, WorkflowAgentStore, type SessionRecord } from "@humanos/database";
 import type { WorkflowEnsPort } from "@humanos/ens";
-import { createContentGenerator, createWorkflowSelector } from "@humanos/models";
+import { createBrowserActionSelector, createContentGenerator, createWorkflowSelector } from "@humanos/models";
 import { createDefaultCatalog } from "@humanos/workflows";
 import { hashCanonical, type Workflow, type WorkflowVersion, type WorkflowRun, type WorkflowNode } from "@humanos/schemas";
 import * as v from "valibot";
@@ -83,7 +83,9 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
     },
   });
   browser = createBrowserStep({ executor: browserExecutor, recipes, authorize, confirmations });
-  browserUse = createBrowserUseStep({ client: browserUseClients, policies: browserUsePolicies, authorize, confirmations, store });
+  // Jev evaluates only finite, sanitized candidates; DeepSeek stays content-only.
+  browserUse = createBrowserUseStep({ client: browserUseClients, policies: browserUsePolicies, authorize, confirmations, store,
+    selector: { select: input => createBrowserActionSelector(models).select(input) } });
   const browserSubmit: WorkflowExecutor = { execute: context => (isBrowserUse(context) ? browserUse! : browser!).executor.execute(context) };
   const external: WorkflowExecutor = { async execute(context) {
     const route = await routeExternalStep(context, { registry: connectors, authorize });
