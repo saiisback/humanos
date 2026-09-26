@@ -5,3 +5,4 @@ export * from "./api.js";
 export * from "./permissions.js";
 export * from "./workflows.js";
 export * from "./workflow-agents.js";
+export * from "./browser-worker.js";
