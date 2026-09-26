@@ -16,6 +16,9 @@ export interface BrowserUsePolicyDefinition {
   readonly fields: readonly BrowserUsePolicyField[];
   /** Controlled local fixture; never offered as a production integration. */
   readonly fixtureOnly?: boolean;
+  /** False means preparation may report availability, but must never yield a dispatch permit. */
+  readonly supportsSubmission?: boolean;
+  readonly requiresEns?: boolean;
 }
 export interface BrowserUsePolicy extends BrowserUsePolicyDefinition {
   validateFields(fields: Record<string, string>): { ok: true } | { ok: false; missing?: string[]; invalid?: string[] };
@@ -53,9 +56,19 @@ export class BrowserUsePolicyRegistry {
   list(): readonly BrowserUsePolicy[] { return [...this.policies.values()]; }
 }
 
-/** Intentionally empty until a user-selected site is inspected (plan task 6). */
+/** Inspected public availability only. The provider's creation/receipt contract is not enabled. */
 export function createBrowserUsePolicyRegistry(): BrowserUsePolicyRegistry {
-  return new BrowserUsePolicyRegistry();
+  const registry = new BrowserUsePolicyRegistry();
+  registry.register({ id: "tablecheck-brooklyn-parlor", label: "Brooklyn Parlor · availability only", origin: "https://www.tablecheck.com",
+    supportsSubmission: false, requiresEns: true, fields: [
+      { name: "date", label: "Date", maxLength: 10, pattern: /^\d{4}-\d{2}-\d{2}$/ },
+      { name: "time", label: "Time", maxLength: 5, pattern: /^(?:[01]\d|2[0-3]):[0-5]\d$/ },
+      { name: "timezone", label: "Timezone", maxLength: 32, pattern: /^Asia\/Tokyo$/ },
+      { name: "adults", label: "Adults", maxLength: 1, pattern: /^[1-5]$/ },
+      { name: "children", label: "Children", maxLength: 1, pattern: /^[0-5]$/ },
+      { name: "offer_id", label: "Offer", maxLength: 24, pattern: /^66c4d4411c588898fe3bb84b$/ },
+    ] });
+  return registry;
 }
 
 export interface BrowserUseScope {

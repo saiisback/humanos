@@ -67,7 +67,7 @@ export type BoundedPayload = v.InferOutput<typeof BoundedPayloadSchema>;
 
 export const BlockTypeSchema = v.picklist([
   "research.web", "extract.structured", "browser.navigate", "browser.extract",
-  "browser.fill", "browser.submit", "connector.call", "content.generate",
+  "browser.fill", "browser.submit", "browser.availability", "connector.call", "content.generate",
   "content.transform", "control.wait", "control.branch", "control.join",
   "human.connect", "human.confirm", "human.input", "schedule.once",
   "schedule.recurring", "application.submit", "calendar.create",

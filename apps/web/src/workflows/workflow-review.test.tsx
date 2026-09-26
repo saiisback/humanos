@@ -2,6 +2,12 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { it, expect } from "vitest";
 import { WorkflowReview, OutputView, ConfirmationPreview } from "./workflow-review";
+it("labels availability as a read and does not promise automatic booking", () => {
+  const html = renderToStaticMarkup(<WorkflowReview version={{ graph: { nodes: [{ id: "one", type: "browser.availability" }] }, requiredCapabilities: ["web.search"], activatedAt: null } as any} busy={false} onRun={() => {}} />);
+  expect(html).toContain("Check restaurant availability");
+  expect(html).toContain("will not book");
+  expect(html).not.toContain("Submit the reviewed form");
+});
 it("shows booking terms, deposit and unfamiliar payload details alongside fields", () => {
   const html = renderToStaticMarkup(<ConfirmationPreview value={{ destination: "https://restaurant.example/reserve", payload: {
     fields: { name: "Ada", guests: "2" }, material: ["Tokyo", "Cancellation costs JPY 10,000"],

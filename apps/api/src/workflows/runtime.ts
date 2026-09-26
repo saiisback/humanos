@@ -20,6 +20,9 @@ import type { WorkflowApi } from "./routes.js";
 import { agentCapabilityFor, composeWorkflowAuthorizers, createWorkflowAgentAuthorizer, scheduleAuthorityCurrent } from "./agent-authorizer.js";
 import { createWorkflowAgentReceipts } from "./agent-receipts.js";
 import { createWorkflowAgentService } from "./agents.js";
+import { createWorkflowUsageStore } from "@humanos/database";
+import { createUsageContext } from "./usage.js";
+import { estimateUsage, PRICING_DATE } from "./usage-pricing.js";
 
 export function createWorkflowAuthorizer(db: Database, store: WorkflowStore, registry: ReturnType<typeof createDefaultCatalog>, connectors: ConnectorRegistry) {
   return async (context: StepExecutionContext): Promise<boolean> => {
@@ -48,6 +51,8 @@ import { createWorkflowScheduler } from "./scheduler.js";
 
 export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, options: { ens?: WorkflowEnsPort | null } = {}): WorkflowApi & { start(signal: AbortSignal): Promise<void> } {
   const store = new WorkflowStore(db), registry = createDefaultCatalog(), connectors = new ConnectorRegistry();
+  const usageStore = createWorkflowUsageStore(db);
+  const usage = createUsageContext((context, event) => usageStore.upsertAttempt(context, { ...event, pricingDate: PRICING_DATE }));
   const agentStore = new WorkflowAgentStore(db), ens = options.ens ?? null;
   const owner = env.CONNECTOR_ACCOUNT_ID?.toLowerCase();
   connectors.register(createBraveSearchAdapter({ credentials: async accountId => owner === accountId.toLowerCase() && env.BRAVE_SEARCH_API_KEY ? { apiKey: env.BRAVE_SEARCH_API_KEY } : null }));
@@ -71,7 +76,7 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
   const isBrowserUse = (context: StepExecutionContext) => browserUseDestination.test(String(context.input.destination));
   const confirmations = createWorkflowConfirmations({ store,
     requiresConfirmation: type => registry.get(type).requiresConfirmation,
-    prepare: async context => {
+    prepare: async context => usage.run({ accountId: context.actor.accountId, workflowId: context.run.workflowId, versionId: context.version.id, runId: context.run.id, stepId: context.step.id, phase: "execution" }, async () => {
       if (context.node.type === "browser.submit") return isBrowserUse(context) ? browserUse!.prepare(context) : browser!.prepare(context);
       const route = await routeExternalStep(context, { registry: connectors, authorize });
       if (route.kind === "revoked") throw new WorkflowExecutionError("AUTHORIZATION");
@@ -80,7 +85,7 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
       const payload = v.parse(operation.input, context.input) as StepExecutionContext["input"];
       const binding = await adapter.binding!(context.actor.accountId, operation.id) ?? {};
       return { destination: operation.destination(payload), payload, binding };
-    },
+    }),
   });
   browser = createBrowserStep({ executor: browserExecutor, recipes, authorize, confirmations });
   // Jev evaluates only finite, sanitized candidates; DeepSeek stays content-only.
@@ -107,15 +112,20 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
       throw error;
     }
   } };
-  const models = { apiKey: env.OPENCODE_API_KEY!.trim(), timeoutMs: 20000 };
+  const models = { apiKey: env.OPENCODE_API_KEY!.trim(), provider: "opencode" as const, timeoutMs: 20000, onAttempt: usage.onAttempt };
   // One routing context for candidate filtering, assembly inputs and diagnostics.
   const routing = { recipes, browserEnabled: driverEnabled, browserUsePolicies, browserUseEnabled: browserUseClients !== null };
   const service = createWorkflowService({ db, store, registry, selector: boundedIntentSelector(createWorkflowSelector(models), routing), assemblyInput: async goal => workflowInputs(goal, routing),
     describeGoal: goal => { const intent = classifyWorkflowGoal(goal, routing); return { intent: intent.kind, plannedSteps: [...intent.blocks], ...(intent.recipeId ? { recipeId: intent.recipeId } : {}) }; },
     capabilityForNode,
+    usage: {
+      planning: (actor, workflowId, versionId, work) => usage.run({ accountId: actor.accountId, workflowId, versionId, phase: "planning", runId: null, stepId: null }, work),
+      summary: async (accountId, workflowId, runId) => estimateUsage((await usageStore.listForWorkflow(accountId, workflowId)).filter(row => runId ? row.context.runId === runId : row.context.phase === "planning").map(row => row.event)),
+    },
   });
   const runner = createWorkflowRunner({ store, registry, content: createContentGenerator(models), workerId: `local-${process.pid}`, authorize, dispatchConfirmed: confirmations.probeApproved,
-    executors: { "research.web": external, "connector.call": external, "application.submit": external, "calendar.create": external, "browser.submit": browserSubmit, "human.confirm": { execute: confirmations.confirmNode } },
+    withUsage: (context, work) => usage.run({ accountId: context.actor.accountId, workflowId: context.run.workflowId, versionId: context.version.id, runId: context.run.id, stepId: context.step.id, phase: "execution" }, work),
+    executors: { "research.web": external, "connector.call": external, "application.submit": external, "calendar.create": external, "browser.submit": browserSubmit, "browser.availability": browserUse.availability, "human.confirm": { execute: confirmations.confirmNode } },
   });
   const scheduler = createWorkflowScheduler({ store, registry, authorityCurrent: (schedule, now) => scheduleAuthorityCurrent(db, schedule, now, ens) });
   const agents = createWorkflowAgentService({ db, store, agentStore, ens, capabilityForNode });

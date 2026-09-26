@@ -55,6 +55,7 @@ class ReadRule:
 
     path: str
     query_keys: frozenset[str] = frozenset()
+    bound_values_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,7 @@ class SitePolicy:
     entry_path: str
     fields: tuple[FieldSpec, ...]
     submit_selector: str
-    submit: SubmitContract
+    submit: SubmitContract | None
     success_path_prefix: str
     reference_selector: str
     reference_pattern: str
@@ -98,7 +99,7 @@ class SitePolicy:
         if parts.scheme not in (("http", "https") if self.allow_http else ("https",)) or f"{parts.scheme}://{parts.netloc}" != self.origin \
                 or parts.username or parts.password or not parts.hostname or "." not in parts.hostname:
             raise PolicyError("INVALID_ORIGIN")
-        for path in (self.entry_path, self.success_path_prefix, self.submit.path, *self.read_paths, *(r.path for r in self.preparation_reads)):
+        for path in (self.entry_path, *([self.success_path_prefix, self.submit.path] if self.submit else []), *self.read_paths, *(r.path for r in self.preparation_reads)):
             _check_path(path)
         if not self.fields or len({f.name for f in self.fields}) != len(self.fields):
             raise PolicyError("INVALID_FIELDS")
@@ -106,10 +107,10 @@ class SitePolicy:
             if not _FIELD.match(spec.name) or not 1 <= spec.max_length <= 2000:
                 raise PolicyError("INVALID_FIELDS")
             _check_selector(spec.selector)
-        for selector in (self.submit_selector, self.reference_selector, *self.material_selectors,
+        for selector in (*([self.submit_selector, self.reference_selector] if self.submit else []), *self.material_selectors,
                          *(s for s in (self.select_selector, self.value_selector, self.login_selector, self.captcha_selector) if s)):
             _check_selector(selector)
-        if self.submit.method not in ("POST", "PUT", "PATCH") or self.submit.content_type != "application/x-www-form-urlencoded":
+        if self.submit and (self.submit.method not in ("POST", "PUT", "PATCH") or self.submit.content_type != "application/x-www-form-urlencoded"):
             raise PolicyError("INVALID_SUBMIT")
         if self.value_selector and not (self.currency and re.match(r"^[A-Z]{3}$", self.currency)):
             raise PolicyError("INVALID_VALUE")
@@ -121,6 +122,8 @@ class SitePolicy:
 
     @property
     def destination(self) -> str:
+        if self.submit is None:
+            raise PolicyError("SUBMISSION_UNSUPPORTED")
         return f"{self.origin}{self.submit.path}"
 
 
@@ -141,8 +144,11 @@ class PolicyRegistry:
 
 
 def production_policies() -> PolicyRegistry:
-    """Intentionally empty until the user selects and the team inspects a real site (plan task 6)."""
-    return PolicyRegistry()
+    """The inspected TableCheck integration is read-only; no production write is allowed."""
+    from .sites.tablecheck import tablecheck_policy
+    registry = PolicyRegistry()
+    registry.register(tablecheck_policy())
+    return registry
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +233,11 @@ class NetworkGuard:
     blocked: list[tuple[str, str, str]] = field(default_factory=list)
     tampered: bool = False
     _armed: _Armed | None = None
+    _bound_reads: dict[str, tuple[tuple[str, str], ...]] = field(default_factory=dict, repr=False)
 
     def arm(self, fields: dict[str, str]) -> None:
+        if self.policy.submit is None:
+            raise PolicyError("SUBMISSION_UNSUPPORTED")
         self._armed = _Armed(dict(fields))
         self.phase = "armed"
 
@@ -261,7 +270,7 @@ class NetworkGuard:
             return Decision(True, "STATIC")
         if self.phase == "interacting" and read and self._preparation_read(path, parts.query):
             return Decision(True, "PREPARATION_READ")
-        if self.phase == "armed" and self._armed and not self._armed.sent and method == self.policy.submit.method \
+        if self.phase == "armed" and self.policy.submit and self._armed and not self._armed.sent and method == self.policy.submit.method \
                 and path == self.policy.submit.path:
             if not parts.query and exact_form_body(content_type, body, self._armed.fields):
                 self._armed.sent = True
@@ -269,14 +278,23 @@ class NetworkGuard:
                 return Decision(True, "SUBMIT")
             self.tampered = True
             return self._block(method, path, "SUBMIT_MISMATCH")
-        if self.phase == "submitted" and read and (path.startswith(self.policy.success_path_prefix) or static):
+        if self.phase == "submitted" and self.policy.submit and read and (path.startswith(self.policy.success_path_prefix) or static):
             return Decision(True, "RECEIPT")
         return self._block(method, path, "NOT_ALLOWED_IN_" + self.phase.upper())
 
+    def bind_preparation_read(self, path: str, pairs: tuple[tuple[str, str], ...]) -> None:
+        keys = [key for key, _ in pairs]
+        if len(keys) != len(set(keys)) or not any(r.path == path and r.bound_values_required and r.query_keys == set(keys)
+                                                for r in self.policy.preparation_reads):
+            raise PolicyError("UNINSPECTED_READ")
+        self._bound_reads[path] = tuple(pairs)
+
     def _preparation_read(self, path: str, query: str) -> bool:
         try:
-            keys = [k for k, _ in parse_qsl(query, keep_blank_values=True, strict_parsing=bool(query), max_num_fields=16)]
+            pairs = tuple(parse_qsl(query, keep_blank_values=True, strict_parsing=bool(query), max_num_fields=16))
+            keys = [k for k, _ in pairs]
         except ValueError:
             return False
         return any(rule.path == path and len(set(keys)) == len(keys) and set(keys) == set(rule.query_keys)
+                   and (not rule.bound_values_required or pairs == self._bound_reads.get(path))
                    for rule in self.policy.preparation_reads)

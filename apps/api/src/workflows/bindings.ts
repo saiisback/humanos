@@ -4,7 +4,7 @@ import type { BrowserRecipe, BrowserRecipeRegistry } from "./browser.js";
 import type { BrowserUsePolicyRegistry } from "./browser-use-policy.js";
 import { browserUseBookingPlan, parseBookingRequest, type BookingKey } from "./booking-request.js";
 interface Intent {
-  kind: "draft" | "research" | "email" | "booking" | "clarify";
+  kind: "draft" | "research" | "email" | "booking" | "availability" | "clarify";
   blocks: BlockType[];
   recipient?: string;
   prompt?: string;
@@ -87,6 +87,12 @@ function routeBooking(goal: string, context: GoalRoutingContext): Intent {
     const intake = restaurantIntake(goal);
     if (intake.isRestaurant) {
       const required = [...intake.missing, ...intake.invalid];
+      const policy = context.browserUsePolicies?.get("tablecheck-brooklyn-parlor");
+      if (!required.length && context.browserUseEnabled && policy?.supportsSubmission === false) {
+        const d = intake.details;
+        return { kind: "availability", blocks: ["browser.availability"], destination: "browser-use:tablecheck-brooklyn-parlor",
+          fields: { date: d.date!, time: d.time!, timezone: d.timezone!, adults: d.adults!, children: d.children!, offer_id: d.offerId! } };
+      }
       return clarify(required.length
         ? `Complete these reservation details in HumanOS: ${required.map(key => restaurantLabels[key]).join(", ")}. Nothing was booked.`
         : "Your reservation details are saved. TableCheck submission is not integrated yet. Your booking must run through a registered ENS agent in HumanOS; nothing has been booked or submitted.");
@@ -129,6 +135,10 @@ export function classifyWorkflowGoal(goal: string, context: GoalRoutingContext =
   if (restaurantIntake(goal).isRestaurant) {
     const booking = routeBooking(goal, context);
     if (booking.kind === "clarify") return booking;
+    // This reviewed integration is incapable of submission; the saved 'book' intent
+    // prepares the requested reservation for later review, not a live write.
+    if (booking.destination === "browser-use:tablecheck-brooklyn-parlor" && context.browserUsePolicies?.get("tablecheck-brooklyn-parlor")?.supportsSubmission === false)
+      return booking;
     if (negatedBooking || /\b(?:availability|prepare)\b/.test(lower))
       return clarify("Your reservation details are saved. Availability-only preparation is not supported by this booking flow yet; nothing will be submitted.");
     return booking;
@@ -157,6 +167,8 @@ export function classifyWorkflowGoal(goal: string, context: GoalRoutingContext =
 export function workflowInputs(goal: string, context: GoalRoutingContext = {}): Omit<AssemblyInput, "goal" | "draft"> {
   const intent = classifyWorkflowGoal(goal, context);
   if (intent.kind === "clarify") return { completionSequence: intent.blocks, allowedCapabilities: [], inputs: { "human.input": { value: { prompt: intent.prompt! } } } };
+  if (intent.kind === "availability") return { completionSequence: intent.blocks, allowedCapabilities: ["web.search"], browserFallbackAllowed: true, unsupportedExternalEffect: true,
+    inputs: { "browser.availability": { value: { destination: intent.destination!, payload: { ...intent.fields! } } } } };
   if (intent.kind === "booking") return {
     completionSequence: intent.blocks, allowedCapabilities: ["application.submit"],
     browserFallbackAllowed: true, unsupportedExternalEffect: true,

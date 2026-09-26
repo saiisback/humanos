@@ -153,7 +153,11 @@ class Worker:
         try:
             await asyncio.wait_for(self.browser.start(), 30)
             stage = "open"
-            self.actions = BookingActions(self.browser, policy)
+            if policy.id == "tablecheck-brooklyn-parlor":
+                from .sites.tablecheck import TableCheckActions
+                self.actions = TableCheckActions(self.browser, policy)
+            else:
+                self.actions = BookingActions(self.browser, policy)
             await asyncio.wait_for(self.actions.open(), COMMAND_TIMEOUT)
         except Exception as error:
             print(f"worker: start failed at {stage}: {type(error).__name__}", file=sys.stderr)

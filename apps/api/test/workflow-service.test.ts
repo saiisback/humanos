@@ -15,6 +15,21 @@ const actor = {
   rootId: null,
 };
 const registry = createDefaultCatalog();
+it("upgrades a legacy account task to ENS authority when assembling browser availability", async () => {
+  const scoped = createWorkflowService({ newWorkflowAuthority: "account", db, store, registry,
+    selector: { async select(input) {
+      const type = input.history?.includes("browser.availability") ? "complete" : "browser.availability";
+      return { selectedCandidateId: input.candidates.find(c => c.type === type)!.id, parameters: {}, confidence: 1, alignment: 1, risk: 0, injection: 0, needsReview: false, reasonCodes: [] };
+    } },
+    assemblyInput: async () => ({ allowedCapabilities: ["web.search"], completionSequence: ["browser.availability"], browserFallbackAllowed: true, unsupportedExternalEffect: true,
+      inputs: { "browser.availability": { value: { destination: "browser-use:tablecheck-brooklyn-parlor", payload: { date: "2099-09-28", time: "19:00", timezone: "Asia/Tokyo", adults: "2", children: "0", offer_id: "66c4d4411c588898fe3bb84b" } } } } }),
+  });
+  const draft = await scoped.createDraft(actor, null, "Check table availability");
+  expect(draft.workflow.authorityRequirement).toBe("account");
+  const assembled = await scoped.assemble(actor, draft.workflow.id);
+  expect(assembled.workflow.authorityRequirement).toBe("ens");
+  expect(assembled.versions.at(-1)?.requiredCapabilities).toEqual(["web.search"]);
+});
 const service = createWorkflowService({
   newWorkflowAuthority: "account", // Exercise legacy account-workflow behavior.
   db,

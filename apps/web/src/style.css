@@ -23,6 +23,17 @@
 .task-details { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 12px; }
 .task-details > summary { min-height: 44px; padding: 10px 0; cursor: pointer; font-size: 14px; }
 .task-details a { overflow-wrap: anywhere; }
+.usage-footer { margin: 24px 0; max-width: 560px; min-width: 0; }
+.usage-footer h3 { margin: 0 0 20px; font-size: 16px; }
+.usage-chart { display: grid; gap: 18px; }
+.usage-chart-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.usage-chart-label span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.usage-chart-label span:last-child { flex-shrink: 0; }
+.usage-chart-track { height: 10px; background: var(--quiet); border-radius: 3px; overflow: hidden; }
+.usage-chart-bar { height: 100%; background: var(--muted); border-radius: 3px; }
+.usage-chart-bar-own { background: var(--cobalt); }
+.usage-chart-note { margin: 16px 0 0; max-width: 60ch; }
+.usage-footer .task-details { margin-top: 12px; }
 .workflow-steps { list-style: decimal-leading-zero; padding-left: 28px; margin: 20px 0; }
 .workflow-steps li { padding: 9px 0 9px 6px; }
 .workflow-steps small { display: block; color: var(--muted); margin-top: 4px; }

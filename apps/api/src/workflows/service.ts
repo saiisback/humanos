@@ -36,6 +36,10 @@ import type { WorkflowActor } from "./types.js";
 import { resolveAuthorityPin, scheduleAuthorityCurrent } from "./agent-authorizer.js";
 
 export interface WorkflowServiceDependencies {
+  usage?: {
+    planning<T>(actor: WorkflowActor, workflowId: string, versionId: string, work: () => Promise<T>): Promise<T>;
+    summary(accountId: string, workflowId: string, runId?: string): Promise<import("@humanos/schemas").WorkflowUsageSummary>;
+  };
   /** Server-only creation policy; legacy/import callers can retain account authority. */
   newWorkflowAuthority?: "ens" | "account";
   db: Database;
@@ -70,6 +74,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
     const workflow = await owned(actor, id);
     return {
       workflow,
+      ...(deps.usage ? { usage: await deps.usage.summary(actor.accountId, id) } : {}),
       versions: (await store.list<WorkflowVersion>("workflow_versions"))
         .filter((v) => v.workflowId === id)
         .sort((a, b) => a.version - b.version),
@@ -91,6 +96,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
     const stepIds = new Set(steps.map((s) => s.id));
     return {
       run,
+      ...(deps.usage ? { usage: await deps.usage.summary(actor.accountId, run.workflowId, id) } : {}),
       steps,
       attempts: (await store.list<StepAttempt>("workflow_attempts")).filter(
         (a) => stepIds.has(a.stepRunId),
@@ -214,12 +220,14 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       const described = deps.describeGoal?.(latest.goal) ?? {};
       const config = await deps.assemblyInput(latest.goal, actor);
       let result;
+      const assembledVersionId = randomUUID();
       try {
-        result = await assembleWorkflow(
+        const assemble = () => assembleWorkflow(
           { ...config, goal: latest.goal, draft: { nodes: [] } },
           deps.selector,
           registry,
         );
+        result = deps.usage ? await deps.usage.planning(actor, id, assembledVersionId, assemble) : await assemble();
       } catch (error) {
         // Keep the stop visible and actionable: an unexecutable draft version records why.
         const outcome = error instanceof AssemblyReviewError
@@ -228,7 +236,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         if (outcome) {
           const graph = { nodes: [] };
           await store.insertVersion({
-            ...latest, id: randomUUID(), version: latest.version + 1,
+            ...latest, id: assembledVersionId, version: latest.version + 1,
             graph, graphHash: hashCanonical(graph), requiredCapabilities: [], connectorRefs: [],
             normalizedIntent: { ...described, assembly: outcome },
             activatedAt: null, createdAt: new Date().toISOString(),
@@ -238,7 +246,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       }
       const version: WorkflowVersion = {
         ...latest,
-        id: randomUUID(),
+        id: assembledVersionId,
         version: latest.version + 1,
         normalizedIntent: { ...described, assembly: { outcome: "ASSEMBLED" } },
         graph: result.graph,
@@ -267,6 +275,11 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         createdAt: new Date().toISOString(),
       };
       await store.insertVersion(version);
+      // Browser availability is an ENS-scoped read, including on legacy account
+      // workflows. Tighten authority; never grant a binding or mark one active here.
+      if (version.graph.nodes.some(node => node.type === "browser.availability")) {
+        await db.query("UPDATE workflows SET data=jsonb_set(data,'{authorityRequirement}','\"ens\"'::jsonb) WHERE id=$1 AND account_id=$2", [id, actor.accountId]);
+      }
       return detail(actor, id);
     },
     /** Save an edited request as a new, unassembled draft version. Activated versions are untouched. */

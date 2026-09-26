@@ -2,12 +2,13 @@ import React from "react";
 import type { JsonValue, WorkflowVersion } from "@humanos/schemas";
 export const blockLabel: Record<string, string> = { "research.web": "Research trusted sources", "content.generate": "Write with DeepSeek", "content.transform": "Refine the content", "human.confirm": "Your final confirmation", "connector.call": "Send through your connected service", "human.input": "A detail is needed", "browser.navigate": "Open the approved website", "browser.extract": "Read page details", "browser.fill": "Prepare the form", "browser.submit": "Submit the reviewed form" };
 export function WorkflowReview({ version, busy, onRun, startControl }: { version: WorkflowVersion; busy: boolean; onRun(): void; startControl?: React.ReactNode }) {
+  const availabilityOnly = version.graph.nodes.length > 0 && version.graph.nodes.every(node => node.type === "browser.availability");
   return <section className="workflow-card" aria-label="Workflow review">
     <span className="eyebrow">Jev · deterministic blocks</span>
     <h2>Plan ready for review</h2>
-    <ol className="workflow-steps">{version.graph.nodes.map(node => <li key={node.id}><span>{blockLabel[node.type] ?? node.type.replaceAll(".", " ")}</span></li>)}</ol>
+    <ol className="workflow-steps">{version.graph.nodes.map(node => <li key={node.id}><span>{node.type === "browser.availability" ? "Check restaurant availability" : blockLabel[node.type] ?? node.type.replaceAll(".", " ")}</span></li>)}</ol>
     {version.requiredCapabilities.length > 0 && <p className="fine">Permissions: {version.requiredCapabilities.join(" · ")}</p>}
-    <p className="fine">No external action has been taken. Sending or submitting will pause for your exact final confirmation.</p>
+    <p className="fine">{availabilityOnly ? "This run checks your exact restaurant, date, time and party size through your ENS agent. It will not book a table or send your contact details. Automatic reservation submission is not enabled yet." : "No external action has been taken. Sending or submitting will pause for your exact final confirmation."}</p>
     {startControl ?? <button onClick={onRun} disabled={busy}>{version.activatedAt ? "Run again" : "Review & run"}</button>}
   </section>;
 }

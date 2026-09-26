@@ -4,6 +4,7 @@ import { hotelIntake, hotelRequestText, restaurantRequestText } from "@humanos/s
 import { WorkflowConnections } from "./connections";
 import { EnsTaskStart } from "./ens-start";
 import { CompletedTask } from "./completed-task";
+import { UsageFooter } from "./usage-footer";
 import { RunBrowserHandoff } from "./browser-handoff";
 import { WorkflowAgentPanel, identityNavigation, ownedDetail, runGate, workflowSearch, type Load, type WorkflowAgentDetailResponse } from "./agent-panel";
 import { api, ApiError } from "../../lib/api";
@@ -211,7 +212,8 @@ export function WorkflowWorkspace() {
     {!auth.account ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>Make room for being human.</h1><p>Delegate the work. Keep the final say.</p><button disabled={busy || auth.status === "signing-in" || !auth.jawConfigured} onClick={() => void perform(auth.signIn)}>{auth.status === "signing-in" ? "Signing in…" : "Sign in with JAW"}</button>{!auth.jawConfigured && <button className="secondary" disabled={busy} onClick={() => void perform(auth.refresh)}>Retry connection</button>}</section> : !detail ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>What can I take off your plate?</h1><p>One request. A saved workflow. You keep the final say.</p><div className="workflow-suggestions">{["Write a friendly introduction email draft", "Research a three-day Japan itinerary", "Send an email to someone"].map(text => <button key={text} className="secondary" onClick={() => setGoal(text)}>{text} ↗</button>)}</div><p className="fine">Drafts work with your model connection. Research and sending need their respective services.</p></section> : <div className="workflow-conversation">
       <div className="workflow-prompt">{latest && restaurantRequestText(hotelRequestText(latest.goal))}</div>
       {busy && <p role="status" className="fine">Saving and preparing your workflow…</p>}
-      {completedLatest && run && <CompletedTask outputs={outputs} pending={pendingAgent} canRun={!!gate?.allowed} busy={busy}
+      <details className="task-details"><summary>Lifetime planning usage · all versions</summary><UsageFooter summary={detail.usage} /></details>
+      {completedLatest && run && <CompletedTask usage={run.usage} outputs={outputs} pending={pendingAgent} canRun={!!gate?.allowed} busy={busy}
         transactionHash={agent.status === "ready" ? agent.value.binding?.registrationTxHashes.at(-1) : undefined}
         onRun={() => void perform(() => startRun())} onIdentity={() => setIdentity(true)}>
         <ol className="workflow-steps">{run.steps.map(step => <li key={step.id}><span>{blockLabel[step.blockType] ?? step.blockType}</span><small>{step.status.toLowerCase().replaceAll("_", " ")}</small></li>)}</ol>
@@ -225,6 +227,7 @@ export function WorkflowWorkspace() {
       {latest?.activatedAt && <ScheduleEditor workflowId={detail.workflow.id} versionId={latest.id} schedules={detail.schedules} onChanged={async () => { if (account.current && selectedId.current === detail.workflow.id) await select(detail.workflow.id); }} />}
       {run && <section className="workflow-card" aria-label="Run timeline"><h2 role="status">{labels[run.run.status] ?? run.run.status}</h2>{run.run.pauseReason && <p>{run.run.pauseReason}</p>}<RunBrowserHandoff run={run} version={detail?.versions.find(v => v.id === run.run.workflowVersionId)} preview={preview?.preview ?? null} accountLabel={auth.account?.id ?? "this account"} /><ol className="workflow-steps">{run.steps.map(step => <li key={step.id}><span>{blockLabel[step.blockType] ?? step.blockType}</span><small>{step.status.toLowerCase().replaceAll("_", " ")}</small></li>)}</ol>
         {outputs.map(output => <OutputView key={output.stepRunId} value={output.output} />)}
+        <UsageFooter summary={run.usage} />
         {preview && status === "CONFIRMATION_REQUIRED" && <section className="workflow-confirm" aria-label="Exact action confirmation"><h3>Review exactly what will happen</h3><ConfirmationPreview value={preview.preview} /><button disabled={busy} onClick={() => void perform(() => actOnRun("confirm", { confirmationId: preview.confirmation.id, expectedPayloadHash: preview.confirmation.payloadHash }))}>Confirm this exact action</button></section>}
         {!preview && status === "CONFIRMATION_REQUIRED" && <section className="workflow-confirm" aria-label="Refresh confirmation"><p>The confirmation expired or is unavailable. Refresh it to review the current details. Refreshing does not send or submit anything.</p><button disabled={busy} onClick={() => void perform(() => actOnRun("resume"))}>Refresh confirmation</button></section>}
         {run.receipts.map(receipt => <div className="workflow-receipt" key={receipt.id}><strong>{receipt.summary}</strong><p>{receipt.destination}</p><small>Provider reference: {receipt.providerReference ?? "Recorded receipt"}</small></div>)}

@@ -157,7 +157,7 @@ class GuardedSession:
         # same-origin requests. The real-browser boundary test checks permitted paths
         # from both this document and an about:blank child, with a relaxed-CSP control.
         # Blob workers are also refused and about:blank children inherit this policy.
-        paths = sorted({rule.path for rule in self.policy.preparation_reads} | {self.policy.submit.path})
+        paths = sorted({rule.path for rule in self.policy.preparation_reads} | ({self.policy.submit.path} if self.policy.submit else set()))
         sources = " ".join(f"{self.policy.origin}{path}" for path in paths) or "'none'"
         return f"connect-src {sources}; worker-src 'none'; object-src 'none'; base-uri 'none'"
 

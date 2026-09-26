@@ -49,6 +49,7 @@ export class WorkflowExecutionError extends Error {
   }
 }
 export interface RunnerDependencies {
+  withUsage?<T>(context: StepExecutionContext, work: () => Promise<T>): Promise<T>;
   store: WorkflowStore;
   registry: BlockRegistry;
   content: ContentGenerator;
@@ -354,7 +355,7 @@ export function createWorkflowRunner(deps: RunnerDependencies) {
               throw new WorkflowExecutionError("AUTHORIZATION");
             await assertDispatchActive();
             dispatched = true;
-            return execute({ ...context, step });
+            return deps.withUsage ? deps.withUsage({ ...context, step }, () => execute({ ...context, step })) : execute({ ...context, step });
           };
           const approvedDispatch = async () => {
             if (!block.requiresConfirmation) return dispatch();

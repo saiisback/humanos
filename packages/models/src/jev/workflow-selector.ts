@@ -38,6 +38,7 @@ const catalogDescriptions: Record<BlockType | "complete", string> = {
   "browser.extract": "Extract browser data",
   "browser.fill": "Fill a browser form",
   "browser.submit": "Submit a browser form",
+  "browser.availability": "Check the exact requested restaurant availability through an inspected read-only browser adapter and ENS authorization. Returns availability only; it cannot reserve, submit guest details, or report a confirmed booking.",
   "connector.call": "Perform the server-configured operation through a connected service, such as sending an email through the email connector. Operation arguments may use earlier generated content. An ancestor human.confirm step is required; at execution the user must confirm the resolved destination and payload, and live authorization is checked before dispatch. Adding this block plans the effect; it does not send or submit anything now. Assess whether that effect matches the goal, not whether generic service access is desirable.",
   "content.generate": "Generate content",
   "content.transform": "Transform content",

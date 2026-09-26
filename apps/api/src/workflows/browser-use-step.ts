@@ -134,6 +134,8 @@ export function createBrowserUseStep(deps: BrowserUseStepDependencies) {
     const id = browserUseDestination.exec(String(context.input.destination))?.[1];
     const policy = id ? deps.policies.get(id) : null;
     if (!policy) throw new WorkflowPause("CONNECTION_REQUIRED", "No inspected site policy is installed for this booking site. No page was opened.");
+    if (policy.requiresEns && (context.run.authorityMode !== "ens" || !context.run.agentBindingId))
+      throw new WorkflowExecutionError("AUTHORIZATION");
     if (!deps.client) throw new WorkflowPause("CONNECTION_REQUIRED", "The local Browser Use worker is not enabled on this HumanOS server. No page was opened.");
     const payload = context.input.payload;
     if (!payload || typeof payload !== "object" || Array.isArray(payload) || Object.values(payload).some(item => typeof item !== "string"))
@@ -243,6 +245,15 @@ export function createBrowserUseStep(deps: BrowserUseStepDependencies) {
         if (ready.status !== "ready") pauseFor(ready);
         if (ready.payload.policyId !== policy.id || ready.payload.origin !== policy.origin) throw new WorkflowExecutionError("VALIDATION");
       }
+      if (policy.supportsSubmission === false) {
+        const result = await send({ command: "prepare", payload: { fields } });
+        if (result.status === "handoff" && result.payload.reason === "UNSUPPORTED_EFFECT") {
+          // A bounded provider availability report is a pause, never a confirmation or receipt.
+          throw new WorkflowPause("CONNECTION_REQUIRED", result.payload.message);
+        }
+        if (result.status === "prepared" || result.status === "submitted") throw new WorkflowExecutionError("VALIDATION");
+        pauseFor(result);
+      }
       for (;;) {
         const observed = await send({ command: "observe", payload: {} });
         if (observed.status === "handoff" && (observed.payload.reason === "LOGIN_REQUIRED" || observed.payload.reason === "CAPTCHA")) handoff(HANDOFF_MESSAGES[observed.payload.reason]!);
@@ -298,6 +309,25 @@ export function createBrowserUseStep(deps: BrowserUseStepDependencies) {
     async prepare(context: StepExecutionContext): Promise<PreparedAction> {
       const { session, prepared, policy } = await prepareSession(context, "preview");
       return toPrepared(policy, prepared, session.note);
+    },
+    availability: {
+      async execute(context: StepExecutionContext): Promise<StepExecutionResult> {
+        const { policy, fields } = target(context);
+        if (policy.supportsSubmission !== false || !policy.requiresEns) throw new WorkflowExecutionError("VALIDATION");
+        await authorized(context);
+        const client = deps.client!({ accountId: context.actor.accountId, runId: context.run.id });
+        try {
+          await authorized(context);
+          const ready = await client.request({ command: "start", payload: { policyId: policy.id } }, context.signal);
+          if (ready.status !== "ready") pauseFor(ready);
+          if (ready.payload.policyId !== policy.id || ready.payload.origin !== policy.origin) throw new WorkflowExecutionError("VALIDATION");
+          await authorized(context);
+          const result = await client.request({ command: "prepare", payload: { fields } }, context.signal);
+          if (result.status === "prepared" || result.status === "submitted") throw new WorkflowExecutionError("VALIDATION");
+          if (result.status !== "handoff" || result.payload.reason !== "UNSUPPORTED_EFFECT") pauseFor(result);
+          return { output: { text: result.payload.message, booked: false } };
+        } finally { await client.close(); }
+      },
     },
     executor: {
       async execute(context: StepExecutionContext): Promise<StepExecutionResult> {

@@ -191,10 +191,18 @@ export type ConfirmWorkflowStepRequest = v.InferOutput<typeof ConfirmWorkflowSte
 
 export const WorkflowListResponseSchema = v.strictObject({ workflows: v.array(WorkflowSchema) });
 export type WorkflowListResponse = v.InferOutput<typeof WorkflowListResponseSchema>;
+export const WorkflowUsageSummarySchema = v.object({
+  pricingDate: v.string(), complete: v.boolean(), attempts: v.number(), retries: v.number(), unknownAttempts: v.number(),
+  knownModelCostUsd: v.nullable(v.number()),
+  models: v.array(v.object({ model: v.string(), inputTokens: v.nullable(v.number()), outputTokens: v.nullable(v.number()), attempts: v.number(), unknownAttempts: v.number() })),
+  comparisons: v.array(v.object({ model: v.string(), costUsd: v.nullable(v.number()), source: v.string() })),
+});
+export type WorkflowUsageSummary = v.InferOutput<typeof WorkflowUsageSummarySchema>;
 export const WorkflowDetailResponseSchema = v.strictObject({
   workflow: WorkflowSchema,
   versions: v.array(WorkflowVersionSchema),
   schedules: v.array(WorkflowScheduleSchema),
+  usage: v.optional(WorkflowUsageSummarySchema),
 });
 export type WorkflowDetailResponse = v.InferOutput<typeof WorkflowDetailResponseSchema>;
 export const WorkflowRunListResponseSchema = v.strictObject({ runs: v.array(WorkflowRunSchema) });
@@ -206,6 +214,7 @@ export const WorkflowRunDetailResponseSchema = v.strictObject({
   events: v.array(WorkflowEventSchema),
   confirmations: v.array(RunConfirmationSchema),
   receipts: v.array(WorkflowReceiptSchema),
+  usage: v.optional(WorkflowUsageSummarySchema),
 });
 export type WorkflowRunDetailResponse = v.InferOutput<typeof WorkflowRunDetailResponseSchema>;
 export const WorkflowScheduleListResponseSchema = v.strictObject({
