@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Workflow, WorkflowDetailResponse, WorkflowRun, WorkflowRunDetailResponse, JsonValue, WorkflowConnection, WorkflowConnectionsResponse } from "@humanos/schemas";
-import { hotelIntake, hotelRequestText } from "@humanos/schemas";
+import { hotelIntake, hotelRequestText, restaurantRequestText } from "@humanos/schemas";
 import { WorkflowConnections } from "./connections";
 import { EnsTaskStart } from "./ens-start";
 import { CompletedTask } from "./completed-task";
@@ -209,7 +209,7 @@ export function WorkflowWorkspace() {
     onSignOut={() => { generation.current++; void perform(auth.signOut); }} busy={busy} error={error} onRetry={() => void perform(async () => { await auth.refresh(); await refreshList(); await refreshConnections(); if (detail) await select(detail.workflow.id); })}
     composer={hotelFollowup ? <p className="fine" role="status">Answer the hotel questions above to continue this task. Choose New task in the sidebar to start something else.</p> : <Composer value={goal} onChange={setGoal} onSubmit={() => void perform(create)} disabled={busy || !auth.account} canSubmit={!!auth.account} preparing={busy && !!goal} providerNote="Jev selects audited steps · DeepSeek writes the content" />}>
     {!auth.account ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>Make room for being human.</h1><p>Delegate the work. Keep the final say.</p><button disabled={busy || auth.status === "signing-in" || !auth.jawConfigured} onClick={() => void perform(auth.signIn)}>{auth.status === "signing-in" ? "Signing in…" : "Sign in with JAW"}</button>{!auth.jawConfigured && <button className="secondary" disabled={busy} onClick={() => void perform(auth.refresh)}>Retry connection</button>}</section> : !detail ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>What can I take off your plate?</h1><p>One request. A saved workflow. You keep the final say.</p><div className="workflow-suggestions">{["Write a friendly introduction email draft", "Research a three-day Japan itinerary", "Send an email to someone"].map(text => <button key={text} className="secondary" onClick={() => setGoal(text)}>{text} ↗</button>)}</div><p className="fine">Drafts work with your model connection. Research and sending need their respective services.</p></section> : <div className="workflow-conversation">
-      <div className="workflow-prompt">{latest && hotelRequestText(latest.goal)}</div>
+      <div className="workflow-prompt">{latest && restaurantRequestText(hotelRequestText(latest.goal))}</div>
       {busy && <p role="status" className="fine">Saving and preparing your workflow…</p>}
       {completedLatest && run && <CompletedTask outputs={outputs} pending={pendingAgent} canRun={!!gate?.allowed} busy={busy}
         transactionHash={agent.status === "ready" ? agent.value.binding?.registrationTxHashes.at(-1) : undefined}

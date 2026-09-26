@@ -1,4 +1,4 @@
-import { hotelIntake, type BlockType } from "@humanos/schemas";
+import { hotelIntake, restaurantIntake, restaurantLabels, type BlockType } from "@humanos/schemas";
 import type { AssemblyInput, WorkflowSelector } from "@humanos/workflows";
 import type { BrowserRecipe, BrowserRecipeRegistry } from "./browser.js";
 import type { BrowserUsePolicyRegistry } from "./browser-use-policy.js";
@@ -83,6 +83,15 @@ function routeBooking(goal: string, context: GoalRoutingContext): Intent {
   // Hotel intake never borrows a restaurant policy or grants external capabilities.
   if (hotel.isHotel) return clarify(hotel.missing.length ? hotel.question
     : "Your hotel details are saved. No supported hotel booking service is installed, so HumanOS cannot check availability or book this stay yet. Nothing was booked or submitted.");
+  if (goal.includes("\n\n[Restaurant details]\n")) {
+    const intake = restaurantIntake(goal);
+    if (intake.isRestaurant) {
+      const required = [...intake.missing, ...intake.invalid];
+      return clarify(required.length
+        ? `Complete these reservation details in HumanOS: ${required.map(key => restaurantLabels[key]).join(", ")}. Nothing was booked.`
+        : "Your reservation details are saved. TableCheck submission is not integrated yet. Your booking must run through a registered ENS agent in HumanOS; nothing has been booked or submitted.");
+    }
+  }
   const browserUse = routeBrowserUseBooking(goal, context);
   if (browserUse) return browserUse;
   const recipes = context.recipes?.list() ?? [];
@@ -114,7 +123,25 @@ export function classifyWorkflowGoal(goal: string, context: GoalRoutingContext =
   // ("login works", "do not publish") do not grant external capabilities.
   if (draftOnly && /^(?:please\s+)?(?:draft|write|rewrite|compose|translate|summari[sz]e)\b/.test(lower.trim()))
     return { kind: "draft", blocks: ["content.generate"] };
-  const negatedBooking = /\b(do not|don't|dont|without) (book|reserve|pay|buy)\b/.test(lower);
+  const negatedBooking = /\b(do not|don't|dont|without) (book(?:ing)?|reserv(?:e|ing)|pay(?:ing)?|buy(?:ing)?)\b/.test(lower);
+  // Restaurant preparation carries private guest data. It must not fall through
+  // to either email sending or an unredacted public-search query.
+  if (restaurantIntake(goal).isRestaurant) {
+    const booking = routeBooking(goal, context);
+    if (booking.kind === "clarify") return booking;
+    if (negatedBooking || /\b(?:availability|prepare)\b/.test(lower))
+      return clarify("Your reservation details are saved. Availability-only preparation is not supported by this booking flow yet; nothing will be submitted.");
+    return booking;
+  }
+  // Withholding booking approval is not a request to email the contact address.
+  // Preserve the reservation intent and return its real setup/intake blocker;
+  // never offer send-email or submission capabilities for preparation-only work.
+  if (!draftOnly && negatedBooking && /\b(book|reserve|reservation)\b/.test(lower)) {
+    if (/\b(research|search|find|itinerary|latest|current|compare)\b/.test(lower))
+      return { kind: "research", blocks: ["research.web", "content.generate"] };
+    const booking = routeBooking(goal, context);
+    return booking.kind === "clarify" ? booking : clarify("Your reservation details are saved. You asked not to book yet. Availability-only preparation is not supported by this booking flow yet; no email will be sent and nothing will be submitted.");
+  }
   if (!draftOnly && !negatedBooking && /\b(book|reserve|reservation)\b/.test(lower)) return routeBooking(goal, context);
   if (!draftOnly && /\b(send|email|mail)\b/.test(lower)) {
     const recipients = [...new Set(goal.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [])];

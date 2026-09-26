@@ -7,3 +7,4 @@ export * from "./workflows.js";
 export * from "./workflow-agents.js";
 export * from "./browser-worker.js";
 export * from "./hotel-intake.js";
+export * from "./restaurant-intake.js";

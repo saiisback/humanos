@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { hashCanonical, type RunConfirmation, type StepRun, type WorkflowSelection, type WorkflowVersion } from "@humanos/schemas";
+import { hashCanonical, updateRestaurantDetails, type RunConfirmation, type StepRun, type WorkflowSelection, type WorkflowVersion } from "@humanos/schemas";
 import type { WorkflowStore } from "@humanos/database";
 import { assembleWorkflow, createDefaultCatalog, type WorkflowSelector } from "@humanos/workflows";
 import { classifyWorkflowGoal, workflowInputs, boundedIntentSelector, type GoalRoutingContext } from "../src/workflows/bindings.js";
@@ -30,6 +30,43 @@ const enabled: GoalRoutingContext = { recipes: withRecipes(recipe), browserEnabl
 const complete = "Book Harbor Table for Friday. Name: Ada Lovelace; Guests: 2";
 
 describe("deterministic booking routing", () => {
+  it("retains structured restaurant details and reports the actual integration blocker", () => {
+    const goal = updateRestaurantDetails("Prepare a dinner reservation at Brooklyn Parlor", {
+      siteId: "tablecheck-brooklyn-parlor", venueId: "brooklynparlor-shinjuku", date: "2030-09-28", time: "19:00", timezone: "Asia/Tokyo",
+      adults: "2", children: "0", guestFirstName: "Ada", guestLastName: "Lovelace", phone: "+919999999999", email: "ada@example.com", allergies: "none",
+      offerId: "66c4d4411c588898fe3bb84b", intent: "book",
+    });
+    expect(classifyWorkflowGoal(goal).prompt).toMatch(/details are saved/i);
+    expect(classifyWorkflowGoal(goal).prompt).toMatch(/TableCheck/i);
+    expect(workflowInputs(goal).allowedCapabilities).toEqual([]);
+    expect(workflowInputs(goal).completionSequence).toEqual(["human.input"]);
+  });
+  it.each(["Check dinner availability at Brooklyn Parlor", "Prepare a table at Brooklyn Parlor"])("does not turn %s contact details into mail", request => {
+    const goal = `${request}. Contact email: ada@example.com`;
+    for (const input of [goal, updateRestaurantDetails(goal, { intent: "prepare" })]) {
+      expect(classifyWorkflowGoal(input).kind).toBe("clarify");
+      expect(workflowInputs(input).allowedCapabilities).toEqual([]);
+      expect(workflowInputs(input).inputs).not.toHaveProperty("connector.call");
+    }
+  });
+  it("keeps reservation contact information out of public search", () => {
+    const result = workflowInputs("Find a dinner reservation at Brooklyn Parlor; do not book yet. Contact email: ada@example.com; phone: +919999999999");
+    expect(result.completionSequence).toEqual(["human.input"]);
+    expect(result.allowedCapabilities).toEqual([]);
+    expect(result.inputs).not.toHaveProperty("research.web");
+  });
+  it("keeps a reservation preparation request out of email execution when final booking is withheld", () => {
+    const goal = "Check online availability and prepare a table-only dinner reservation at Brooklyn Parlor Shinjuku for 2 adults on September 28, 2026 at 19:00 Asia/Tokyo. Guest full name: Ada Lovelace. Contact email: ada@example.com. This future date is for an availability test only; do not book it yet. Ask me for my mobile number and allergy information; do not invent either. Show the exact terms and any fees, then wait for my final confirmation before submitting.";
+    expect(classifyWorkflowGoal(goal).kind).toBe("clarify");
+    expect(workflowInputs(goal).completionSequence).toEqual(["human.input"]);
+    expect(workflowInputs(goal).allowedCapabilities).toEqual([]);
+    expect(workflowInputs(goal).inputs).not.toHaveProperty("connector.call");
+  });
+  it.each(["do not book yet", "don't reserve yet", "without booking"])("does not grant submission or email permissions for %s", (restriction) => {
+    const goal = `${complete}; Contact email: ada@example.com; ${restriction}`;
+    expect(classifyWorkflowGoal(goal, enabled).kind).toBe("clarify");
+    expect(workflowInputs(goal, enabled).allowedCapabilities).toEqual([]);
+  });
   it("fails closed with an honest message when no audited site is installed (the production default)", () => {
     for (const context of [{}, { recipes: new BrowserRecipeRegistry(), browserEnabled: true }]) {
       const intent = classifyWorkflowGoal(complete, context);
