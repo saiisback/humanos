@@ -1,6 +1,6 @@
 # ENSv2-backed durable workflows
 
-Status: proposed design for user review; not implemented.
+Status: design approved by the user on September 26, 2026; implementation pending plan review.
 
 ## Outcome
 
