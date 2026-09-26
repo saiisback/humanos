@@ -9,10 +9,10 @@ import { createWorkflowRunner, WorkflowPause, WorkflowExecutionError } from "./r
 import { createWorkflowConfirmations } from "./confirmations.js";
 import { ConnectorRegistry, createBraveSearchAdapter, createResendEmailAdapter, routeExternalStep, dispatchConnectorStep } from "./connectors.js";
 import { boundedIntentSelector, workflowInputs, classifyWorkflowGoal } from "./bindings.js";
-import { describeWorkflowConnections, connectorSetupFromEnv, describeBrowser } from "./connection-status.js";
+import { describeWorkflowConnections, connectorSetupFromEnv, describeBrowser, describeBrowserUse } from "./connection-status.js";
 import { createAuditedRecipeRegistry, createBrowserExecutor, createPlaywrightDriver } from "./browser.js";
 import { createBrowserStep } from "./browser-step.js";
-import { browserUseClientFactory } from "./browser-use-client.js";
+import { browserUseClientFactory, browserUseRuntimeConfig } from "./browser-use-client.js";
 import { createBrowserUsePolicyRegistry } from "./browser-use-policy.js";
 import { browserUseDestination, createBrowserUseStep } from "./browser-use-step.js";
 import type { StepExecutionContext, WorkflowExecutor } from "./types.js";
@@ -65,7 +65,7 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
   }) }) : null;
   let browser: ReturnType<typeof createBrowserStep> | null = null;
   // Opt-in local Browser Use worker; disabled unless explicitly selected and configured.
-  const browserUseClients = browserUseClientFactory(env);
+  const browserUseClients = browserUseClientFactory(env), browserUseConfig = browserUseRuntimeConfig(env);
   const browserUsePolicies = createBrowserUsePolicyRegistry();
   let browserUse: ReturnType<typeof createBrowserUseStep> | null = null;
   const isBrowserUse = (context: StepExecutionContext) => browserUseDestination.test(String(context.input.destination));
@@ -122,7 +122,10 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
   const receipts = ens ? createWorkflowAgentReceipts({ db, agentStore, ens }) : null;
   const connections = (actor: { accountId: string }) => describeWorkflowConnections({
     accountId: actor.accountId, registry: connectors, setup: connectorSetupFromEnv(env), models: !!env.OPENCODE_API_KEY?.trim(),
-    browser: describeBrowser(driverEnabled, recipes.list().map(recipe => recipe.label)),
+    browser: browserUseConfig.enabled
+      ? describeBrowserUse({ enabled: true, configured: { python: !!browserUseConfig.python, profileRoot: !!browserUseConfig.profileRoot, chromium: !!browserUseConfig.chromium },
+          siteLabels: browserUsePolicies.list().filter(p => !p.fixtureOnly).map(p => p.label), workerVerified: false, authority: "account" })
+      : describeBrowser(driverEnabled, recipes.list().map(recipe => recipe.label)),
   });
   return { service, store, agents, confirmations, connections,
     ...(env.FLUE_URL && env.FLUE_INTERNAL_SECRET ? { flue: { url: env.FLUE_URL, secret: env.FLUE_INTERNAL_SECRET } } : {}),

@@ -2,13 +2,29 @@ import { expect, it } from "vitest";
 import * as v from "valibot";
 import { WorkflowConnectionsResponseSchema } from "@humanos/schemas";
 import { ConnectorRegistry, createBraveSearchAdapter, createResendEmailAdapter } from "../src/workflows/connectors.js";
-import { describeWorkflowConnections, connectorSetupFromEnv, describeBrowser } from "../src/workflows/connection-status.js";
+import { describeWorkflowConnections, connectorSetupFromEnv, describeBrowser, describeBrowserUse } from "../src/workflows/connection-status.js";
 
 it("reports the browser as connected only with the driver enabled and an audited site installed", () => {
   expect(describeBrowser(false, ["Site"]).status).toBe("disabled");
   expect(describeBrowser(true, [])).toMatchObject({ status: "setup_required" });
   expect(describeBrowser(true, [])?.setup).toContain("audited recipe");
   expect(describeBrowser(true, ["Reserve a table"])).toMatchObject({ status: "connected", setup: null });
+});
+
+it("never reports Browser Use connected from configuration alone", () => {
+  const configured = { python: true, profileRoot: true, chromium: true };
+  const base = { enabled: true, configured, siteLabels: [] as string[], workerVerified: false, authority: "account" as const };
+  expect(describeBrowserUse({ ...base, enabled: false }).status).toBe("disabled");
+  const partial = describeBrowserUse({ ...base, configured: { ...configured, chromium: false } });
+  expect(partial).toMatchObject({ status: "setup_required" });
+  expect(partial.setup).toContain("HUMANOS_BROWSER_CHROMIUM");
+  expect(describeBrowserUse(base)).toMatchObject({ status: "setup_required" });
+  expect(describeBrowserUse({ ...base, siteLabels: ["Sakura"] }).status).toBe("setup_required");
+  const ready = describeBrowserUse({ ...base, siteLabels: ["Sakura"], workerVerified: true });
+  expect(ready.status).toBe("connected");
+  expect(ready.detail).toContain("your account session only");
+  expect(ready.detail).toContain("Jev evaluator");
+  expect(describeBrowserUse({ ...base, siteLabels: ["Sakura"], workerVerified: true, authority: "ens" }).detail).toContain("ENS-bound");
 });
 
 const owner = "11155111:0x1111111111111111111111111111111111111111";
