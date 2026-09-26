@@ -15,6 +15,7 @@ import { AppShell } from "../shell/app-shell";
 import { WorkflowReview, OutputView, ConfirmationPreview, blockLabel } from "./workflow-review";
 import { ScheduleEditor } from "./schedule-editor";
 import { selectionStillCurrent, runSelectionAction } from "./selection-fence";
+import { loadRunSnapshot } from "./run-snapshot";
 
 const terminal = new Set(["COMPLETED", "FAILED", "CANCELLED", "REVOKED", "RECONCILIATION_REQUIRED"]);
 export function WorkflowWorkspace() {
@@ -53,10 +54,14 @@ export function WorkflowWorkspace() {
   }
   async function loadRun(id: string) {
     const actor = account.current, selected = selectedId.current, stamp = generation.current;
-    const response = await api<WorkflowRunDetailResponse>(`/workflow-runs/${encodeURIComponent(id)}`);
-    const values = await api<{ outputs: Array<{ stepRunId: string; output: JsonValue }> }>(`/workflow-runs/${encodeURIComponent(id)}/outputs`);
-    const confirmation = response.confirmations.filter(c => c.status === "PENDING" && Date.parse(c.expiresAt) > Date.now()).at(-1);
-    const prepared = confirmation ? await api<typeof preview>(`/workflow-confirmations/${encodeURIComponent(confirmation.id)}`) : null;
+    const { run: response, outputs: values, preview: prepared } = await loadRunSnapshot(
+      () => api<WorkflowRunDetailResponse>(`/workflow-runs/${encodeURIComponent(id)}`),
+      () => api<{ outputs: Array<{ stepRunId: string; output: JsonValue }> }>(`/workflow-runs/${encodeURIComponent(id)}/outputs`),
+      async response => {
+        const confirmation = response.confirmations.filter(c => c.status === "PENDING" && Date.parse(c.expiresAt) > Date.now()).at(-1);
+        return confirmation ? api<typeof preview>(`/workflow-confirmations/${encodeURIComponent(confirmation.id)}`) : null;
+      },
+    );
     if (!current(actor, selected, stamp)) return;
     setRun(response); setOutputs(values.outputs); setPreview(prepared);
   }
