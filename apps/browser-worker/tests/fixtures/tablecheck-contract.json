@@ -1,0 +1,21 @@
+{
+  "source": "https://www.tablecheck.com/en/shops/brooklynparlor-shinjuku/reserve",
+  "venue": "brooklynparlor-shinjuku",
+  "inspectedOn": "2026-09-27",
+  "preparation": {
+    "times": {"method": "GET", "path": "/en/shops/brooklynparlor-shinjuku/sheets", "responseField": "slots"},
+    "availability": {"method": "GET", "path": "/en/shops/brooklynparlor-shinjuku/available", "successStatus": "success"}
+  },
+  "form": {
+    "selector": "#new_reservation",
+    "method": "POST",
+    "path": "/en/shops/brooklynparlor-shinjuku/reserve/create",
+    "remote": true,
+    "hasSessionToken": true,
+    "hasNestedKeys": true,
+    "duplicateNames": ["reservation_confirm_shop_note", "reservation[customer][create_account]", "reservation[customer][allow_marketing]"]
+  },
+  "tableOnlyDinnerOfferId": "66c4d4411c588898fe3bb84b",
+  "submissionVerified": false,
+  "receiptVerified": false
+}
