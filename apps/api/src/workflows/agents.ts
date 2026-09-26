@@ -79,17 +79,21 @@ export function createWorkflowAgentService(deps: {
       "workflow_versions",
       versionId,
     );
+    const newest = (await db.query<{ id: string }>(
+      "SELECT id FROM workflow_versions WHERE workflow_id=$1 ORDER BY (data->>'version')::int DESC LIMIT 1",
+      [id],
+    )).rows[0]?.id;
     if (
       workflow.status === "ARCHIVED" ||
-      workflow.latestVersionId !== versionId ||
+      newest !== versionId ||
       !version ||
       version.workflowId !== id ||
-      !version.graph.nodes.length ||
       (workflow.rootId && workflow.rootId !== actor.rootId)
     )
       throw new Error("GRAPH_CHANGED");
     if (version.graphHash !== hashCanonical(version.graph))
       throw new Error("GRAPH_CHANGED");
+    if (!version.graph.nodes.length) throw new Error("WORKFLOW_NOT_PREPARED");
     return { workflow, version, account };
   }
   function capabilities(version: WorkflowVersion): Capability[] {

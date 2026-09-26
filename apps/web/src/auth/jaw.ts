@@ -6,6 +6,8 @@ import { parseSiweMessage } from "viem/siwe";
 export type JawAuthErrorCode =
   | "UNAVAILABLE"
   | "USER_REJECTED"
+  | "POPUP_BLOCKED"
+  | "SIGN_IN_TIMEOUT"
   | "MISSING_CAPABILITY"
   | "INVALID_RESPONSE"
   | "ACCOUNT_MISMATCH"
@@ -17,6 +19,8 @@ export class JawAuthError extends Error {
       {
         UNAVAILABLE: "JAW account sign-in is unavailable.",
         USER_REJECTED: "Passkey sign-in was cancelled.",
+        POPUP_BLOCKED: "Your browser blocked the JAW window. Allow pop-ups for this site, then try signing in again.",
+        SIGN_IN_TIMEOUT: "JAW sign-in timed out. If no wallet window appeared, open HumanOS in Helium or Chrome and allow pop-ups for this site, then retry.",
         MISSING_CAPABILITY: "JAW did not return a SIWE signature.",
         INVALID_RESPONSE: "JAW returned an invalid sign-in response.",
         ACCOUNT_MISMATCH: "JAW returned a different account than the signer.",
@@ -79,8 +83,9 @@ export function createJawAuthClient(
       )
         throw new JawAuthError("SIWE_CONTEXT_MISMATCH");
       let response: unknown;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
-        response = await provider.request({
+        response = await Promise.race([provider.request({
           method: "wallet_connect",
           params: [
             {
@@ -96,10 +101,22 @@ export function createJawAuthClient(
               },
             },
           ],
-        });
+        }), new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            // Settle first so a teardown rejection cannot hide the timeout.
+            reject(new JawAuthError("SIGN_IN_TIMEOUT"));
+            void Promise.resolve().then(disconnect).catch(() => {});
+          }, 60_000);
+        })]);
       } catch (error) {
+        const detail = record(error);
+        const message = detail?.message ?? record(detail?.error)?.message;
+        if (typeof message === "string" && /failed to open popup|allow popups/i.test(message))
+          throw new JawAuthError("POPUP_BLOCKED");
         if (rejected(error)) throw new JawAuthError("USER_REJECTED");
         throw error;
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
       }
       const accounts = record(response)?.accounts;
       if (

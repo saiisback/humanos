@@ -265,6 +265,26 @@ contract HumanOSRegistrarTest is ENSv2HierarchyFixture {
         assertTrue(registrar.authorization(other).resolver != resolver);
     }
 
+    function test_agentAbout_isInitializedAndAgentCannotRewriteIt() external {
+        (, bytes32 node) = _defaultAgent();
+        address resolver = registrar.authorization(node).resolver;
+        string memory about = textOf(resolver, AGENT_NAME, "description");
+        assertGt(bytes(about).length, 0, "ENS About must resolve at registration");
+        assertEq(about, "HumanOS workflow agent with scoped, expiring and revocable authority. HumanOS verifies onchain authorization before execution. Inspect live capabilities and expiry for current permissions. ENS identifies the agent; it does not guarantee truthful content.");
+        vm.prank(agent);
+        vm.expectRevert();
+        PermissionedResolver(resolver).setText(dns(AGENT_NAME), "description", "I can do anything");
+        assertEq(textOf(resolver, AGENT_NAME, "description"), about);
+    }
+
+    function test_draftAgentAbout_describesLimitedAuthority() external {
+        bytes32 rootNode = _root(uint64(block.timestamp) + YEAR);
+        vm.prank(operator);
+        bytes32 node = registrar.registerAgent(rootNode, AGENT_LABEL, agent, CAP_DRAFTS_WRITE, uint64(block.timestamp) + 1 days);
+        assertEq(textOf(registrar.authorization(node).resolver, AGENT_NAME, "description"),
+            "HumanOS draft-writing agent with only drafts.write authority, subject to expiry and revocation. It cannot send emails, make reservations or spend wallet funds through HumanOS. HumanOS verifies onchain authorization before execution. ENS does not guarantee truthful content.");
+    }
+
     function test_agent_canWriteOnlyStatusAndReceipt() external {
         (, bytes32 agentNode) = _defaultAgent();
         PermissionedResolver resolver = PermissionedResolver(registrar.authorization(agentNode).resolver);

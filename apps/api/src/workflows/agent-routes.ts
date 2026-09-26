@@ -19,6 +19,8 @@ export function createWorkflowAgentRoutes(
     await next();
   });
   app.onError((error, c) => {
+    if (error.message === "WORKFLOW_NOT_PREPARED" || error.message === "ENS_SCOPE_UNAVAILABLE")
+      return c.json({ error: { code: error.message, message: "Prepare an executable workflow with supported actions before enabling an ENS agent. A missing booking integration cannot be fixed by granting ENS permissions. No permissions were granted." } }, 409);
     if (v.isValiError(error) || error instanceof SyntaxError)
       return c.json(
         {

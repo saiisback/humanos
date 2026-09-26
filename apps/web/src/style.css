@@ -16,6 +16,13 @@
 .workflow-prompt { margin: 0 0 32px auto; max-width: 85%; padding: 14px 18px; background: var(--quiet); border-radius: 16px 16px 4px 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .workflow-card { padding: 24px 0; border-bottom: 1px solid var(--line); }
 .workflow-card h2 { font-size: 22px; margin: 8px 0 18px; }
+.completed-task { padding: 24px 0; min-width: 0; }
+.completed-task h2 { font-size: 22px; margin: 0 0 8px; }
+.completed-task .workflow-output { padding: 8px 0 24px; }
+.task-update { margin: 8px 0 20px; max-width: 65ch; }
+.task-details { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 12px; }
+.task-details > summary { min-height: 44px; padding: 10px 0; cursor: pointer; font-size: 14px; }
+.task-details a { overflow-wrap: anywhere; }
 .workflow-steps { list-style: decimal-leading-zero; padding-left: 28px; margin: 20px 0; }
 .workflow-steps li { padding: 9px 0 9px 6px; }
 .workflow-steps small { display: block; color: var(--muted); margin-top: 4px; }

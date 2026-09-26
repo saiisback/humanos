@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Workflow, WorkflowDetailResponse, WorkflowRun, WorkflowRunDetailResponse, JsonValue, WorkflowConnection, WorkflowConnectionsResponse } from "@humanos/schemas";
 import { WorkflowConnections } from "./connections";
+import { EnsTaskStart } from "./ens-start";
+import { CompletedTask } from "./completed-task";
 import { WorkflowAgentPanel, identityNavigation, ownedDetail, runGate, workflowSearch, type Load, type WorkflowAgentDetailResponse } from "./agent-panel";
 import { api, ApiError } from "../../lib/api";
 import { RefineCard, planStatus } from "./refine-card";
@@ -34,6 +36,7 @@ export function WorkflowWorkspace() {
     { account: account.current, selected: selectedId.current, generation: generation.current },
   );
   const status = run?.run.status;
+  const pendingAgent = agent.status === "ready" && agent.value.binding?.state === "PENDING_REGISTRATION";
   async function perform(fn: () => Promise<void>) {
     setBusy(true); setError("");
     try { await fn(); } catch (cause) { setError(cause instanceof Error ? cause.message : "The request could not complete."); }
@@ -105,6 +108,18 @@ export function WorkflowWorkspace() {
     addEventListener("popstate", sync);
     return () => removeEventListener("popstate", sync);
   }, []);
+  // Refresh authority independently from execution. A namespace reset must never rerun a task.
+  useEffect(() => {
+    const id = detail?.workflow.id;
+    if (!id || !pendingAgent) return;
+    let loading = false;
+    const timer = setInterval(() => {
+      if (loading) return;
+      loading = true;
+      void refreshAgent(id).finally(() => { loading = false; });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [detail?.workflow.id, auth.account?.id, pendingAgent]);
   function setIdentity(open: boolean) {
     const next = identityNavigation(location.search, history.state, open);
     if (next.kind === "back") { history.back(); return; }
@@ -113,7 +128,10 @@ export function WorkflowWorkspace() {
     setIdentityOpen(open);
   }
   const latest = detail?.versions.at(-1);
-  const gate = latest ? runGate(agent, latest.id) : null;
+  const completedLatest = status === "COMPLETED" && run?.run.workflowVersionId === latest?.id;
+  const gate = latest ? runGate(agent, latest.id, Date.now(), detail?.workflow.authorityRequirement === "ens") : null;
+  const needsEnsStart = detail?.workflow.authorityRequirement === "ens" &&
+    agent.status === "ready" && (!agent.value.bindings.length || agent.value.binding?.state === "PENDING_REGISTRATION");
   async function actOnRun(action: "confirm" | "resume" | "cancel", body: unknown = {}) {
     if (!run || !detail) return;
     const id = run.run.id;
@@ -157,11 +175,15 @@ export function WorkflowWorkspace() {
     void refreshAgent(response.workflow.id);
     await refreshList(); await assemble(response.workflow.id);
   }
-  async function startRun() {
+  async function startRun(registered?: WorkflowAgentDetailResponse) {
     if (!detail || !latest) return;
     const actor = account.current, selected = detail.workflow.id, stamp = generation.current;
     if (!current(actor, selected, stamp)) return;
-    if (!runGate(agent, latest.id).allowed) return;
+    const authority = registered ? { status: "ready" as const, value: registered } : agent;
+    const executionGate = runGate(authority, latest.id);
+    if (!executionGate.allowed) return;
+    if (detail.workflow.authorityRequirement === "ens" && executionGate.mode !== "ens") return;
+    if (registered) setAgent(authority);
     if (!latest.activatedAt) {
       const activated = await api<WorkflowDetailResponse>(`/workflows/${selected}/activate`, { versionId: latest.id, expectedGraphHash: latest.graphHash });
       if (!current(actor, selected, stamp)) return;
@@ -176,24 +198,34 @@ export function WorkflowWorkspace() {
   }
   const labels: Record<string, string> = { QUEUED: "Queued", RUNNING: "Working on it", COMPLETED: "Run complete", CONNECTION_REQUIRED: "Connect a service to continue", CONFIRMATION_REQUIRED: "Your final confirmation", INPUT_REQUIRED: "One detail is missing", RECONCILIATION_REQUIRED: "Outcome needs checking — not retried", WAITING: "Waiting", RETRY_SCHEDULED: "Retry scheduled", CANCELLED: "Cancelled", FAILED: "Run stopped", REVOKED: "Permission no longer available" };
   return <AppShell missions={[]} workflows={workflows} onSelectWorkflow={id => void perform(() => select(id))} selectedId={detail?.workflow.id ?? null} onSelect={() => {}} onNew={() => { generation.current++; selectedId.current = null; setDetail(null); setRun(null); setOutputs([]); setPreview(null); setAgent({ status: "loading" }); setError(""); history.replaceState(null, "", "/"); }} root={auth.root} account={auth.account} readiness={null} connectionsPanel={<WorkflowConnections connections={auth.account ? connections : null} unavailable={!auth.account || connectionsUnavailable} />}
-    identityPanel={<WorkflowAgentPanel workflowId={detail?.workflow.id ?? null} versionId={latest?.id ?? null} versions={detail?.versions.map(version => ({ id: version.id, version: version.version })) ?? []} account={auth.account} root={auth.root} onClose={() => setIdentity(false)} onChanged={async () => { const id = selectedId.current; if (id) await refreshAgent(id); }} />}
+    identityPanel={<WorkflowAgentPanel planReady={!!latest?.graph.nodes.length} workflowId={detail?.workflow.id ?? null} versionId={latest?.id ?? null} versions={detail?.versions.map(version => ({ id: version.id, version: version.version })) ?? []} account={auth.account} root={auth.root} onClose={() => setIdentity(false)} onChanged={async () => { const id = selectedId.current; if (id) await refreshAgent(id); }} />}
     identityOpen={identityOpen} onIdentityOpenChange={setIdentity}
     onSignOut={() => { generation.current++; void perform(auth.signOut); }} busy={busy} error={error} onRetry={() => void perform(async () => { await auth.refresh(); await refreshList(); await refreshConnections(); if (detail) await select(detail.workflow.id); })}
     composer={<Composer value={goal} onChange={setGoal} onSubmit={() => void perform(create)} disabled={busy || !auth.account} canSubmit={!!auth.account} preparing={busy && !!goal} providerNote="Jev selects audited steps · DeepSeek writes the content" />}>
     {!auth.account ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>Make room for being human.</h1><p>Delegate the work. Keep the final say.</p><button disabled={busy || auth.status === "signing-in" || !auth.jawConfigured} onClick={() => void perform(auth.signIn)}>{auth.status === "signing-in" ? "Signing in…" : "Sign in with JAW"}</button>{!auth.jawConfigured && <button className="secondary" disabled={busy} onClick={() => void perform(auth.refresh)}>Retry connection</button>}</section> : !detail ? <section className="welcome"><div className="welcome-mark" aria-hidden="true">✳</div><h1>What can I take off your plate?</h1><p>One request. A saved workflow. You keep the final say.</p><div className="workflow-suggestions">{["Write a friendly introduction email draft", "Research a three-day Japan itinerary", "Send an email to someone"].map(text => <button key={text} className="secondary" onClick={() => setGoal(text)}>{text} ↗</button>)}</div><p className="fine">Drafts work with your model connection. Research and sending need their respective services.</p></section> : <div className="workflow-conversation">
       <div className="workflow-prompt">{latest?.goal}</div>
       {busy && <p role="status" className="fine">Saving and preparing your workflow…</p>}
+      {completedLatest && run && <CompletedTask outputs={outputs} pending={pendingAgent} canRun={!!gate?.allowed} busy={busy}
+        transactionHash={agent.status === "ready" ? agent.value.binding?.registrationTxHashes.at(-1) : undefined}
+        onRun={() => void perform(() => startRun())} onIdentity={() => setIdentity(true)}>
+        <ol className="workflow-steps">{run.steps.map(step => <li key={step.id}><span>{blockLabel[step.blockType] ?? step.blockType}</span><small>{step.status.toLowerCase().replaceAll("_", " ")}</small></li>)}</ol>
+        {run.receipts.map(receipt => <div className="workflow-receipt" key={receipt.id}><strong>{receipt.summary}</strong><p>{receipt.destination}</p><small>Provider reference: {receipt.providerReference ?? "Recorded receipt"}</small></div>)}
+        {latest?.activatedAt && <ScheduleEditor workflowId={detail.workflow.id} versionId={latest.id} schedules={detail.schedules} onChanged={async () => { if (account.current && selectedId.current === detail.workflow.id) await select(detail.workflow.id); }} />}
+      </CompletedTask>}
+      {!completedLatest && <>
       {latest && planStatus(latest) ? <RefineCard version={latest} busy={busy} onRefine={text => void perform(() => refine(detail.workflow.id, text))} onRetry={() => void perform(() => assemble(detail.workflow.id))} />
-        : latest && <WorkflowReview version={latest} busy={busy || !gate?.allowed || !!run && !terminal.has(run.run.status)} onRun={() => void perform(startRun)} />}
-      {latest && agent.status === "ready" && !agent.value.bindings.length && <p className="fine"><button className="agent-link" onClick={() => setIdentity(true)}>Enable ENS agent</button> to review this version’s scope and expiry before running with delegated authority. Until then, runs are account-only.</p>}
+        : latest && <WorkflowReview version={latest} busy={busy || !gate?.allowed || !!run && !terminal.has(run.run.status)} onRun={() => void perform(() => startRun())} startControl={needsEnsStart && auth.account ? <EnsTaskStart key={`${auth.account.id}:${auth.root?.id}:${detail.workflow.id}:${latest.id}`} pending={agent.status === "ready" ? agent.value.binding : null} accountId={auth.account.id} rootId={auth.root?.id ?? null} workflowId={detail.workflow.id} versionId={latest.id} busy={busy} onStart={registered => startRun(registered)} /> : undefined} />}
+      {detail.workflow.authorityRequirement !== "ens" && !!latest?.graph.nodes.length && !planStatus(latest) && agent.status === "ready" && !agent.value.bindings.length && <p className="fine"><button className="agent-link" onClick={() => setIdentity(true)}>Enable ENS agent</button> to review this version’s scope and expiry before running with delegated authority. Until then, runs are account-only.</p>}
       {latest?.activatedAt && <ScheduleEditor workflowId={detail.workflow.id} versionId={latest.id} schedules={detail.schedules} onChanged={async () => { if (account.current && selectedId.current === detail.workflow.id) await select(detail.workflow.id); }} />}
       {run && <section className="workflow-card" aria-label="Run timeline"><h2 role="status">{labels[run.run.status] ?? run.run.status}</h2>{run.run.pauseReason && <p>{run.run.pauseReason}</p>}<ol className="workflow-steps">{run.steps.map(step => <li key={step.id}><span>{blockLabel[step.blockType] ?? step.blockType}</span><small>{step.status.toLowerCase().replaceAll("_", " ")}</small></li>)}</ol>
         {outputs.map(output => <OutputView key={output.stepRunId} value={output.output} />)}
         {preview && status === "CONFIRMATION_REQUIRED" && <section className="workflow-confirm" aria-label="Exact action confirmation"><h3>Review exactly what will happen</h3><ConfirmationPreview value={preview.preview} /><button disabled={busy} onClick={() => void perform(() => actOnRun("confirm", { confirmationId: preview.confirmation.id, expectedPayloadHash: preview.confirmation.payloadHash }))}>Confirm this exact action</button></section>}
+        {!preview && status === "CONFIRMATION_REQUIRED" && <section className="workflow-confirm" aria-label="Refresh confirmation"><p>The confirmation expired or is unavailable. Refresh it to review the current details. Refreshing does not send or submit anything.</p><button disabled={busy} onClick={() => void perform(() => actOnRun("resume"))}>Refresh confirmation</button></section>}
         {run.receipts.map(receipt => <div className="workflow-receipt" key={receipt.id}><strong>{receipt.summary}</strong><p>{receipt.destination}</p><small>Provider reference: {receipt.providerReference ?? "Recorded receipt"}</small></div>)}
         <div className="workflow-actions">{["CONNECTION_REQUIRED", "WAITING", "RETRY_SCHEDULED"].includes(status ?? "") && <button className="secondary" disabled={busy} onClick={() => void perform(() => actOnRun("resume"))}>Retry after resolving</button>}{!terminal.has(run.run.status) && <button className="secondary" disabled={busy} onClick={() => void perform(() => actOnRun("cancel"))}>Cancel run</button>}</div>
       </section>}
       <p className="fine agent-summary" role={gate && !gate.allowed ? "status" : undefined}>{gate?.note} <button className="agent-link" onClick={() => setIdentity(true)}>Identity & permissions</button></p>
+      </>}
     </div>}
   </AppShell>;
 }

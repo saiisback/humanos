@@ -6,6 +6,28 @@ const node = (id: string, type: WorkflowNode["type"], dependsOn: string[], input
 const graph = (...nodes: WorkflowNode[]): WorkflowGraph => ({ nodes });
 
 describe("graph validation", () => {
+  const emailGraph = (subject: JsonValue = { $ref: "draft.subject" }) => graph(
+    node("draft", "content.generate", [], { brief: { instruction: "Write email", context: {}, outputSchema: "email", maxCharacters: 1000 } }),
+    node("confirm", "human.confirm", ["draft"]),
+    node("send", "connector.call", ["confirm"], { connectorId: "resend", operationId: "email.send", arguments: { to: "test@example.com", subject, body: { $ref: "draft.body" } } }),
+  );
+  it("accepts generated email references inside connector arguments", () => {
+    expect(validateWorkflowGraph(emailGraph(), createDefaultCatalog()).order.map(n => n.id)).toEqual(["draft", "confirm", "send"]);
+  });
+  it.each([
+    [{ $ref: "missing.subject" }, "UNBOUND_REFERENCE"],
+    [{ $ref: "draft.text" }, "UNBOUND_REFERENCE"],
+    [{ $ref: "confirm.confirmed" }, "INCOMPATIBLE_REFERENCE"],
+    [{ $ref: "draft.subject", extra: "injected" }, "INVALID_REFERENCE"],
+    [42, "INVALID_BLOCK_INPUT"],
+  ])("rejects invalid nested email binding %j", (value, error) => {
+    expect(() => validateWorkflowGraph(emailGraph(value as JsonValue), createDefaultCatalog())).toThrow(error as string);
+  });
+  it("still requires confirmation for dynamically bound email", () => {
+    const candidate = emailGraph();
+    candidate.nodes[2]!.dependsOn = ["draft"];
+    expect(() => validateWorkflowGraph(candidate, createDefaultCatalog())).toThrow("CONFIRMATION_REQUIRED");
+  });
   it("topologically orders dependencies", () => {
     const result = validateWorkflowGraph(graph(node("b", "control.join", ["a"]), node("a", "control.join", [])), createDefaultCatalog());
     expect(result.order.map((item) => item.id)).toEqual(["a", "b"]);

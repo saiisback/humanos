@@ -1,5 +1,27 @@
 import { it, expect } from "vitest";
 import { classifyWorkflowGoal, workflowInputs } from "../src/workflows/bindings.js";
+import { assembleWorkflow, createDefaultCatalog } from "@humanos/workflows";
+
+it("assembles the real email bindings through draft, confirmation and connector", async () => {
+  const goal = "Send an email to test@example.com saying hello";
+  const result = await assembleWorkflow({ goal, draft: { nodes: [] }, ...workflowInputs(goal) }, {
+    // Only the remote evaluator is substituted; routing, catalog and graph are real.
+    select: async input => ({ selectedCandidateId: input.candidates[0]!.id, parameters: {}, confidence: 1, alignment: 1, risk: 0, injection: 0, needsReview: false, reasonCodes: [] }),
+  }, createDefaultCatalog());
+  expect(result.graph.nodes.map(n => n.type)).toEqual(["content.generate", "human.confirm", "connector.call"]);
+  expect(result.graph.nodes[2]!.input.arguments).toEqual({ to: "test@example.com", subject: { $ref: "assembly_node_1.subject" }, body: { $ref: "assembly_node_1.body" } });
+});
+
+it("asks for booking details and a site when no production recipe exists", () => {
+  const intent = classifyWorkflowGoal("Book a table in Tokyo");
+  expect(intent.kind).toBe("clarify");
+  expect(intent.prompt).toMatch(/date/i);
+  expect(intent.prompt).toMatch(/time/i);
+  expect(intent.prompt).toMatch(/party size/i);
+  expect(intent.prompt).toMatch(/reservation name/i);
+  expect(intent.prompt).toMatch(/site/i);
+  expect(workflowInputs("Book a table in Tokyo").allowedCapabilities).toEqual([]);
+});
 it.each([
   "Draft three social posts about HumanOS. Draft only; do not publish anything.",
   "Draft a status update: JAW login works; research is being tested. Draft only; do not send anything.",

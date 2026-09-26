@@ -16,6 +16,7 @@ const actor = {
 };
 const registry = createDefaultCatalog();
 const service = createWorkflowService({
+  newWorkflowAuthority: "account", // Exercise legacy account-workflow behavior.
   db,
   store,
   registry,
@@ -54,6 +55,19 @@ const service = createWorkflowService({
     browserFallbackAllowed: false,
   }),
 });
+it("requires an onchain agent for new workflows even when the run API is called directly", async () => {
+  const fresh = createWorkflowService({ db, store, registry,
+    selector: { select: async () => { throw new Error("unused"); } },
+    assemblyInput: async () => ({ allowedCapabilities: [], inputs: {} }),
+  });
+  const draft = await fresh.createDraft(actor, null, "Draft a greeting");
+  expect(draft.workflow).toMatchObject({ authorityRequirement: "ens" });
+  const assembled = await service.assemble(actor, draft.workflow.id);
+  const version = assembled.versions.at(-1)!;
+  await service.activate(actor, draft.workflow.id, version.id, version.graphHash);
+  await expect(fresh.runNow(actor, draft.workflow.id, {})).rejects.toThrow("ENS_AGENT_REQUIRED");
+  expect((await store.list<{ workflowId: string }>("workflow_runs")).filter(r => r.workflowId === draft.workflow.id)).toHaveLength(0);
+});
 beforeAll(async () => {
   await db.migrate();
   await db.insert("accounts", {
@@ -66,6 +80,22 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.query(`DROP SCHEMA "${schema}" CASCADE`);
   await db.close();
+});
+it("requeues an expired-confirmation pause without approving or recreating the run", async () => {
+  const draft = await service.createDraft(actor, null, "Draft a greeting");
+  const assembled = await service.assemble(actor, draft.workflow.id);
+  const version = assembled.versions.at(-1)!;
+  await service.activate(actor, draft.workflow.id, version.id, version.graphHash);
+  const current = await service.runNow(actor, draft.workflow.id, {}, "expired-confirmation");
+  const waiting = { ...current.run, status: "CONFIRMATION_REQUIRED" as const, revision: current.run.revision + 1 };
+  await db.query("UPDATE workflow_runs SET status=$2,data=$3::jsonb WHERE id=$1", [current.run.id, waiting.status, JSON.stringify(waiting)]);
+  await expect(service.resume({ accountId: "another", rootId: null }, current.run.id)).rejects.toThrow("NOT_FOUND");
+  const resumed = await service.resume(actor, current.run.id);
+  expect(resumed.run.id).toBe(current.run.id);
+  expect(resumed.run.status).toBe("QUEUED");
+  expect(resumed.confirmations).toEqual([]);
+  expect(resumed.receipts).toEqual([]);
+  expect(resumed.steps).toEqual(current.steps);
 });
 it("records Jev's review stop on a draft version and lets the owner refine the request", async () => {
   const reviewing = createWorkflowService({

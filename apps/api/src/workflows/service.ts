@@ -35,6 +35,8 @@ import type { WorkflowActor } from "./types.js";
 import { resolveAuthorityPin, scheduleAuthorityCurrent } from "./agent-authorizer.js";
 
 export interface WorkflowServiceDependencies {
+  /** Server-only creation policy; legacy/import callers can retain account authority. */
+  newWorkflowAuthority?: "ens" | "account";
   db: Database;
   store: WorkflowStore;
   registry: BlockRegistry;
@@ -113,6 +115,9 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       status === "QUEUED" &&
       ![
         "CONNECTION_REQUIRED",
+        // Re-prepare an expired preview, never grant approval. The runner's
+        // confirmation boundary checks the current payload and expiry again.
+        "CONFIRMATION_REQUIRED",
         "INPUT_REQUIRED",
         "WAITING",
         "RETRY_SCHEDULED",
@@ -164,6 +169,7 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         rootId: actor.rootId,
         missionId,
         name: goal.slice(0, 120),
+        authorityRequirement: missionId ? "account" : (deps.newWorkflowAuthority ?? "ens"),
         status: "DRAFT",
         latestVersionId: versionId,
         createdAt: now,

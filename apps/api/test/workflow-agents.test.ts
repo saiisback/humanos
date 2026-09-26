@@ -58,6 +58,23 @@ const ens = {
   writeReceipt: vi.fn(async () => ({ txHashes: [] })),
 } as unknown as WorkflowEnsPort;
 const service = createWorkflowAgentService({ db, store, agentStore, ens });
+it("identifies an empty plan before ENS review or registration", async () => {
+  const { id, version } = await workflow(false);
+  version.graph = { nodes: [] };
+  version.graphHash = hashCanonical(version.graph);
+  await store.updateVersion(version);
+  const before = vi.mocked(ens.register).mock.calls.length;
+  await expect(service.review(actor, id, version.id)).rejects.toThrow("WORKFLOW_NOT_PREPARED");
+  expect(vi.mocked(ens.register).mock.calls.length).toBe(before);
+});
+it("reviews the newest assembled draft before activation and rejects a superseded version", async () => {
+  const { id, version } = await workflow();
+  const next = { ...version, id: version.id + "-next", version: 2, activatedAt: null };
+  await store.insertVersion(next);
+  const result = await service.review(actor, id, next.id);
+  expect(result.review.versionId).toBe(next.id);
+  await expect(service.review(actor, id, version.id)).rejects.toThrow("GRAPH_CHANGED");
+});
 it("settles the original missing registration before revoking so replacement is not blocked", async () => {
   const { id, version } = await workflow();
   let exists = false;
@@ -98,7 +115,7 @@ it("settles the original missing registration before revoking so replacement is 
   const replacement = await guarded.review(actor, id, version.id);
   expect(replacement.review.id).not.toBe(review.id);
 });
-async function workflow() {
+async function workflow(activate = true) {
   const id = `wf-${++sequence}`,
     at = now.toISOString();
   const graph = {
@@ -157,7 +174,7 @@ async function workflow() {
     },
     version,
   );
-  await store.activateVersion(id, version.id, version.graphHash);
+  if (activate) await store.activateVersion(id, version.id, version.graphHash);
   return { id, version };
 }
 beforeAll(async () => {

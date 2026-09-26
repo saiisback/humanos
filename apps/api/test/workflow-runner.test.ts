@@ -18,7 +18,7 @@ const actor = {
   accountId: "11155111:0x1111111111111111111111111111111111111111",
   rootId: null,
 };
-const service = createWorkflowService({
+const service = createWorkflowService({ newWorkflowAuthority: "account", /* Legacy account-workflow fixture. */
   db,
   store,
   registry,

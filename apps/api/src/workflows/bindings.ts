@@ -49,7 +49,7 @@ function readFields(goal: string, recipe: BrowserRecipe): { fields: Record<strin
 }
 function routeBooking(goal: string, context: GoalRoutingContext): Intent {
   const recipes = context.recipes?.list() ?? [];
-  if (!recipes.length) return clarify("No audited booking site is installed yet, so HumanOS can't book this. Nothing was booked or submitted.");
+  if (!recipes.length) return clarify("To prepare a table booking, provide the restaurant or area/cuisine, booking site, date, time with timezone, party size, budget, and reservation name. No audited booking site is installed yet; that site must be integrated before HumanOS can check availability or submit. Nothing was booked or submitted.");
   const lower = goal.toLowerCase();
   const named = recipes.filter(recipe => lower.includes(recipe.id) || lower.includes(recipe.label.toLowerCase()));
   const labels = recipes.map(recipe => recipe.label).join(", ");

@@ -259,6 +259,7 @@ export function runGate(
   load: Load<WorkflowAgentDetailResponse>,
   versionId: string,
   now = Date.now(),
+  requireEns = false,
 ): RunGate {
   if (load.status === "loading")
     return { allowed: false, note: "Checking this workflow's ENS agent…" };
@@ -268,6 +269,8 @@ export function runGate(
       note: "ENS agent status is unavailable, so runs stay paused. Nothing falls back to account-only mode.",
     };
   const { binding, bindings, available } = load.value;
+  if (!binding && !bindings.length && requireEns)
+    return { allowed: false, note: "ENS registration is included in task start. Nothing runs without verified agent authority." };
   if (!binding && bindings.length === 0)
     return {
       allowed: true,
@@ -308,6 +311,7 @@ export interface AgentActions {
   close(): void;
 }
 export interface AgentViewProps {
+  planReady?: boolean;
   account: WalletAccount | null;
   root: RootIdentity | null;
   workflowId: string | null;
@@ -482,6 +486,7 @@ function ReviewBlock({
   );
 }
 function AgentDetail({
+  planReady = true,
   root,
   versionId,
   versions,
@@ -520,6 +525,7 @@ function AgentDetail({
   };
   const replacing = bindings.length > 0;
   const canReview =
+    planReady &&
     available &&
     !!root &&
     !!versionId &&
@@ -527,6 +533,7 @@ function AgentDetail({
     (!binding || terminalStates.has(binding.state));
   return (
     <>
+      {!planReady && <p role="status" className="fine">Prepare an executable workflow before enabling an ENS agent. Missing connectors must be installed first; ENS permissions do not add booking support.</p>}
       {!available && (
         <p role="status" className="fine">
           ENS is unavailable right now. Stored records are shown, nothing is
@@ -766,6 +773,7 @@ export function WorkflowAgentView(props: AgentViewProps) {
 }
 
 export function WorkflowAgentPanel({
+  planReady = true,
   workflowId,
   versionId = null,
   versions = [],
@@ -774,6 +782,7 @@ export function WorkflowAgentPanel({
   onClose,
   onChanged,
 }: {
+  planReady?: boolean;
   workflowId: string | null;
   versionId?: string | null;
   versions?: Array<{ id: string; version: number }>;
@@ -911,7 +920,7 @@ export function WorkflowAgentPanel({
     review: () =>
       void act(async (captured) => {
         const { accountId: actor, workflowId: selected } = captured;
-        if (!actor || !selected || !versionId) return;
+        if (!actor || !selected || !versionId || !planReady) return;
         const response = await fenced(
           () =>
             api<{ review: WorkflowAgentReview }>(
@@ -987,6 +996,7 @@ export function WorkflowAgentPanel({
   };
   return (
     <WorkflowAgentView
+      planReady={planReady}
       account={account}
       root={root}
       workflowId={workflowId}

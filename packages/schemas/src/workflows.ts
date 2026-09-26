@@ -119,6 +119,8 @@ export const WorkflowSchema = v.strictObject({
   rootId: v.nullable(IdSchema),
   missionId: v.nullable(IdSchema),
   name: ShortTextSchema,
+  // Absent on existing workflows: preserve their original account authority.
+  authorityRequirement: v.optional(v.picklist(["account", "ens"])),
   status: WorkflowStatusSchema,
   latestVersionId: v.nullable(IdSchema),
   createdAt: TimestampSchema,

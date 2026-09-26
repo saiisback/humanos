@@ -66,6 +66,16 @@ const review: WorkflowAgentReview = {
   accountId,
 };
 const noop = () => {};
+it("does not describe an ENS-required task as account-owned before registration", () => {
+  expect(runGate(ready(), "v-2", now, true)).toMatchObject({
+    allowed: false, note: expect.stringContaining("task start"),
+  });
+});
+it("does not offer agent registration for an unprepared empty workflow", () => {
+  const html = view({ planReady: false });
+  expect(html).not.toContain("Enable ENS agent");
+  expect(html).toContain("Prepare an executable workflow before enabling an ENS agent");
+});
 it("shows recorded receipt publication evidence separately from registration", () => {
   const html = view({
     load: ready({

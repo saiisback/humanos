@@ -15,6 +15,10 @@ table from) into HumanOS identities:
 - Agents hold no registry roles: they cannot transfer, re-point resolvers or subregistries, or renew.
 - Each agent has argument-scoped `setText` grants for `humanos.status` and `humanos.receipt` only,
   on a dedicated resolver (resolver grants are resolver-wide per key, so sharing would leak).
+- Registration also initializes the standard ENS `description` record for public About panels.
+  Draft-only agents receive a draft-specific description; other agents receive a scope-neutral
+  description directing readers to live permissions. No private task content is published, and
+  agents receive no permission to change this description. The profile is not proof of truthful output.
 - Expiry is bounded down the hierarchy (agent ≤ root ≤ parent). Expired or revoked labels never
   come back. `authorization(node)` is active only while the whole official chain still resolves.
 - Nobody holds upgrade, resolver, subregistry, link or admin roles on the deployed proxies.

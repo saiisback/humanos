@@ -12,6 +12,8 @@ The product aims to make everyday automation accessible without paying for an un
 
 Source: [saiisback/humanos](https://github.com/saiisback/humanos). Start with the [latest fifteen-demo results](docs/demo-results-2026-09-26.md), [verification record](docs/verification.md), and [live-scenario notes](docs/live-scenarios-2026-09-26.md).
 
+For judges: [Why HumanOS uses ENSv2](docs/ens-judge-guide.md) explains agent naming, permission assignment, off-chain enforcement, the web-only alternative, custody limitations, and a short demo pitch.
+
 ## Contents
 
 - [What works today](#what-works-today)
