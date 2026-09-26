@@ -1,3 +1,5 @@
+![HumanOS — Delegate the work. Keep the final say.](docs/assets/humanos-banner.png)
+
 # HumanOS
 
 Human-owned, temporary AI agents with deterministic permissions, fresh human approval and revocable ENSv2 authority.
