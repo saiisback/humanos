@@ -73,6 +73,10 @@ function routeBooking(goal: string, context: GoalRoutingContext): Intent {
 export function classifyWorkflowGoal(goal: string, context: GoalRoutingContext = {}): Intent {
   const lower = goal.toLowerCase();
   const draftOnly = /\b(draft only|do not send|don't send|without sending)\b/.test(lower) || /\bdraft\b/.test(lower) && !/\bsend\b/.test(lower);
+  // In an explicit writing-only request, words inside the supplied brief
+  // ("login works", "do not publish") do not grant external capabilities.
+  if (draftOnly && /^(?:please\s+)?(?:draft|write|rewrite|compose|translate|summari[sz]e)\b/.test(lower.trim()))
+    return { kind: "draft", blocks: ["content.generate"] };
   const negatedBooking = /\b(do not|don't|dont|without) (book|reserve|pay|buy)\b/.test(lower);
   if (!draftOnly && !negatedBooking && /\b(book|reserve|reservation)\b/.test(lower)) return routeBooking(goal, context);
   if (!draftOnly && /\b(send|email|mail)\b/.test(lower)) {

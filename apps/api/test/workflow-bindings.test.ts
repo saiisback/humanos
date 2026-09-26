@@ -1,6 +1,14 @@
 import { it, expect } from "vitest";
 import { classifyWorkflowGoal, workflowInputs } from "../src/workflows/bindings.js";
 it.each([
+  "Draft three social posts about HumanOS. Draft only; do not publish anything.",
+  "Draft a status update: JAW login works; research is being tested. Draft only; do not send anything.",
+])("does not mistake draft subject matter for an external action: %s", goal => {
+  expect(classifyWorkflowGoal(goal).kind).toBe("draft");
+  expect(workflowInputs(goal).completionSequence).toEqual(["content.generate"]);
+  expect(workflowInputs(goal).allowedCapabilities).toEqual([]);
+});
+it.each([
   "Write a short restaurant reservation inquiry template in English. Draft only; do not send anything.",
   "Draft a reservation inquiry for a restaurant",
   "Write a message asking to reserve a table. Draft only.",

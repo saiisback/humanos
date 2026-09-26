@@ -299,6 +299,7 @@ export const WorkflowSelectionInputSchema = v.strictObject({
   stateHash: HexSchema,
   turn: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(80)),
   history: v.optional(v.pipe(v.array(BlockTypeSchema), v.maxLength(64))),
+  plannedSteps: v.optional(v.pipe(v.array(BlockTypeSchema), v.minLength(1), v.maxLength(64))),
   candidates: v.pipe(v.array(WorkflowAssemblyCandidateSchema), v.minLength(1), v.maxLength(65)),
 });
 export type WorkflowSelectionInput = v.InferOutput<typeof WorkflowSelectionInputSchema>;

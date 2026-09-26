@@ -4,6 +4,15 @@ import type { AssemblyInput, WorkflowSelector } from "../src/index.js";
 import { assembleWorkflow, computeCandidates, createDefaultCatalog, AssemblyReviewError, ASSEMBLY_THRESHOLDS } from "../src/index.js";
 
 const catalog = createDefaultCatalog();
+it("supplies the whole server-authored sequence for evaluating partial steps", async () => {
+  const seen: unknown[] = [];
+  const select: WorkflowSelector["select"] = async input => {
+    seen.push((input as unknown as Record<string, unknown>).plannedSteps);
+    return {selectedCandidateId: input.candidates[0]!.id, parameters: {}, confidence: 1, alignment: 1, risk: 0, injection: 0, needsReview: false, reasonCodes: []};
+  };
+  await assembleWorkflow({...base(), completionSequence: ["research.web", "content.generate"]}, {select}, catalog);
+  expect(seen).toEqual([["research.web", "content.generate"], ["research.web", "content.generate"]]);
+});
 const base = () => ({
   goal: "Find sources and draft a short note",
   draft: { nodes: [] },

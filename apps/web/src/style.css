@@ -147,6 +147,7 @@ small,
 }
 .app-shell {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
@@ -628,6 +629,19 @@ dd {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.mission-nav {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.mission-nav strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-weight: 500;
+}
 .sheet-secondary {
   border-top: 1px solid var(--line);
   margin-top: 24px;
@@ -667,6 +681,8 @@ dd {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
+    overflow: hidden;
     padding: 20px 16px;
     border-right: 1px solid var(--line);
     background: var(--surface);
@@ -692,13 +708,23 @@ dd {
   }
   .desktop-rail nav {
     display: grid;
+    flex: 1;
+    min-height: 0;
+    align-content: start;
+    grid-auto-rows: max-content;
     gap: 5px;
     overflow: auto;
   }
   .rail-secondary {
+    flex-shrink: 0;
     margin-top: auto;
     border-top: 1px solid var(--line);
     padding-top: 10px;
+  }
+  .desktop-rail .brand,
+  .desktop-rail h2,
+  .desktop-rail .rail-new {
+    flex-shrink: 0;
   }
   .rail-secondary button {
     min-height: 44px;

@@ -225,7 +225,7 @@ export async function assembleWorkflow(input: AssemblyInput, selector: WorkflowS
     if (candidates.length === 0) throw new Error("NO_CANDIDATES");
     const stateHash = hashCanonical({ goal: input.goal, graph, allowedCapabilities: input.allowedCapabilities, inputs: input.inputs, browserFallbackAllowed: !!input.browserFallbackAllowed, unsupportedExternalEffect: !!input.unsupportedExternalEffect, completionSequence: input.completionSequence ?? null });
     const candidatesHash = hashCanonical(candidates);
-    const selection = v.parse(WorkflowSelectionSchema, await selectWithinDeadline(selector, { goal: input.goal, stateHash, turn, history: graph.nodes.map((node) => node.type), candidates: [...candidates] }, deadline));
+    const selection = v.parse(WorkflowSelectionSchema, await selectWithinDeadline(selector, { goal: input.goal, stateHash, turn, history: graph.nodes.map((node) => node.type), ...(input.completionSequence ? { plannedSteps: [...input.completionSequence] } : {}), candidates: [...candidates] }, deadline));
     const chosen = candidates.find((candidate) => candidate.id === selection.selectedCandidateId);
     if (!chosen) throw new Error("INVALID_SELECTION");
     const failedChecks = [

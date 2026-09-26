@@ -171,3 +171,30 @@ test("mobile navigation reaches connections and restores focus", async ({
     page.getByRole("button", { name: "Open missions" }),
   ).toBeFocused();
 });
+
+test("a populated workflow rail never stretches the viewport or hides the composer", async ({ page }) => {
+  await mockChat(page);
+  // e2e mode uses the legacy workspace, which shares AppShell and its rail.
+  await page.route("**/api/missions", route => route.fulfill({json: {missions: Array.from({length: 25}, (_, i) => ({
+    ...mission.mission, id: `layout-mission-${i}`, title: `Research and compare three coworking spaces with very long detailed requirements ${long.slice(0, 100)} ${i}`,
+  }))}}));
+  await page.setViewportSize({width: 1280, height: 800});
+  await page.goto("/");
+  await expect(page.locator(".desktop-rail .mission-nav")).toHaveCount(25);
+  const layout = await page.evaluate(() => {
+    const rail = document.querySelector<HTMLElement>(".desktop-rail")!;
+    const nav = rail.querySelector("nav")!;
+    const title = nav.querySelector("strong")!;
+    const composer = document.querySelector(".composer-slot")!;
+    return {
+      railFits: rail.getBoundingClientRect().bottom <= innerHeight + 1,
+      composerFits: composer.getBoundingClientRect().bottom <= innerHeight + 1,
+      listScrolls: nav.scrollHeight > nav.clientHeight,
+      titleCompact: title.getBoundingClientRect().height <= 48,
+      pageFits: document.documentElement.scrollWidth <= innerWidth,
+    };
+  });
+  expect(layout).toEqual({railFits: true, composerFits: true, listScrolls: true, titleCompact: true, pageFits: true});
+  await page.setViewportSize({width: 320, height: 700});
+  expect(await geometry(page)).toEqual({mainOverflow: false, pageOverflow: false, composerInViewport: true, mainAboveComposer: true});
+});
