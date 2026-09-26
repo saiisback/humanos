@@ -2,6 +2,14 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { it, expect } from "vitest";
 import { WorkflowReview, OutputView, ConfirmationPreview } from "./workflow-review";
+it("shows booking terms, deposit and unfamiliar payload details alongside fields", () => {
+  const html = renderToStaticMarkup(<ConfirmationPreview value={{ destination: "https://restaurant.example/reserve", payload: {
+    fields: { name: "Ada", guests: "2" }, material: ["Tokyo", "Cancellation costs JPY 10,000"],
+    value: { amount: "1000", currency: "JPY" }, offerVersion: "offer-v17",
+  } }} />);
+  for (const detail of ["Ada", "Tokyo", "Cancellation costs JPY 10,000", "1000", "JPY", "offer-v17"])
+    expect(html).toContain(detail);
+});
 it("shows destination, sender, and exact content in the final confirmation", () => {
   const html = renderToStaticMarkup(<ConfirmationPreview value={{ destination: "reader@example.org", binding: { sender: "sender@example.org" }, payload: { connectorId: "resend", operationId: "email.send", arguments: { to: "reader@example.org", subject: "Hello", body: "<b>Hi</b>" } } }} />);
   expect(html).toContain("sender@example.org");

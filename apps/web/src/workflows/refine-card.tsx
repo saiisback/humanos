@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { JsonValue, WorkflowVersion } from "@humanos/schemas";
+import { hotelIntake } from "@humanos/schemas";
+import { HotelClarification } from "./hotel-clarification";
 
 const checkText: Record<string, string> = {
   needs_review: "Jev flagged the request for human review.",
@@ -41,6 +43,8 @@ export function RefineCard({ version, busy, onRefine, onRetry }: { version: Work
   const [text, setText] = useState(version.goal);
   useEffect(() => { setText(version.goal); }, [version.id]);
   if (!status) return null;
+  if (hotelIntake(version.goal).isHotel)
+    return <HotelClarification key={version.id} goal={version.goal} busy={busy} onAnswer={onRefine} />;
   const changed = text.trim() && text.trim() !== version.goal.trim();
   return <section className="workflow-card" aria-label="Refine request">
     <span className="eyebrow">Saved · nothing has run</span>

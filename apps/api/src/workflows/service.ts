@@ -15,6 +15,7 @@ import {
   CreateWorkflowRequestSchema,
   BoundedPayloadSchema,
   hashCanonical,
+  updateHotelDetails,
   type Workflow,
   type WorkflowVersion,
   type WorkflowDetailResponse,
@@ -160,6 +161,9 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
         if (!actor.rootId || !mission || mission.rootId !== actor.rootId)
           throw new Error("NOT_FOUND");
       }
+      // Freeze relative hotel dates when saved, rather than reinterpreting them on a later run.
+      goal = updateHotelDetails(goal, {}, new Date());
+      v.parse(CreateWorkflowRequestSchema, { goal });
       const now = new Date().toISOString(),
         id = randomUUID(),
         versionId = randomUUID();
@@ -274,6 +278,8 @@ export function createWorkflowService(deps: WorkflowServiceDependencies) {
       v.parse(CreateWorkflowRequestSchema, { goal });
       const previous = await detail(actor, id);
       if (previous.workflow.status === "ARCHIVED") throw new Error("WORKFLOW_ARCHIVED");
+      goal = updateHotelDetails(goal, {}, new Date());
+      v.parse(CreateWorkflowRequestSchema, { goal });
       const latest = previous.versions.at(-1)!;
       const graph = { nodes: [] };
       await store.insertVersion({

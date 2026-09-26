@@ -109,8 +109,19 @@ Copy `.env.example` and populate only the services you intend to use. Never past
 | `ENS_OPERATOR_PRIVATE_KEY`, `ENS_AGENT_KEY_SEED` | Private operator signing and deterministic scoped-agent derivation |
 | `ENS_CONFIRMATIONS`, `ENS_AGENT_FUNDING_WEI` | Confirmation policy and optional testnet agent gas funding |
 | `DEPLOYER_PRIVATE_KEY`, `HUMANOS_PARENT_LABEL` | Registrar deployment inputs; parent label excludes `.eth` |
-| `HUMANOS_BROWSER_DRIVER` | Set to `local-chromium` to opt into the browser driver |
-| `HUMANOS_BROWSER_PROFILE_DIR`, `HUMANOS_BROWSER_HEADLESS` | Dedicated automation profile and visibility setting |
+| `HUMANOS_BROWSER_DRIVER` | `local-chromium` for audited recipes, or `browser-use` for the local Browser Use worker |
+| `HUMANOS_BROWSER_PROFILE_DIR`, `HUMANOS_BROWSER_HEADLESS` | Dedicated automation profile (root of per-account profiles for Browser Use) and visibility setting |
+| `HUMANOS_BROWSER_WORKER_PYTHON`, `HUMANOS_BROWSER_CHROMIUM` | Browser Use worker interpreter (`apps/browser-worker/.venv/bin/python` after `uv sync`) and Chromium binary |
+
+### Local Browser Use worker
+
+`apps/browser-worker` is a Python 3.12 worker pinned to `browser-use==0.13.10`. It uses only `BrowserSession` and the actor `Page`/`Element` APIs; the autonomous Agent loop is never used. The API launches it as a child process with a scrubbed environment and talks newline-framed JSON over pipes (there is no network port). Every browser request goes through one fail-closed guard. Jev picks among finite, sanitized options, and DeepSeek stays content-only. A booking is submitted once, only for the exact reviewed details, under a single-use permit. An uncertain outcome becomes reconciliation-required and is never retried.
+
+```bash
+cd apps/browser-worker && uv sync && uv run pytest   # controlled local fixture only
+```
+
+No production booking site policy is installed. Until one site is inspected and added, Browser Use booking steps pause with setup instructions, and the Connections screen never shows the worker as connected.
 
 `VITE_` values are exposed to the browser; never put private keys there. Direct-provider keys remain in the environment template for other adapter paths, but the durable workflow runtime currently requires OpenCode. No separate Flue account is needed to run its local service.
 

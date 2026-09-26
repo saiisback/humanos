@@ -1,18 +1,49 @@
-import type { BlockType } from "@humanos/schemas";
+import { hotelIntake, type BlockType } from "@humanos/schemas";
 import type { AssemblyInput, WorkflowSelector } from "@humanos/workflows";
 import type { BrowserRecipe, BrowserRecipeRegistry } from "./browser.js";
+import type { BrowserUsePolicyRegistry } from "./browser-use-policy.js";
+import { browserUseBookingPlan, parseBookingRequest, type BookingKey } from "./booking-request.js";
 interface Intent {
   kind: "draft" | "research" | "email" | "booking" | "clarify";
   blocks: BlockType[];
   recipient?: string;
   prompt?: string;
   recipeId?: string;
+  /** Server-derived browser.submit destination for a Browser Use site policy. */
+  destination?: string;
   fields?: Record<string, string>;
 }
-/** Server-side routing facts. Only audited recipes in source can become booking targets. */
+/** Server-side routing facts. Only audited recipes or inspected site policies in source can become booking targets. */
 export interface GoalRoutingContext {
   recipes?: BrowserRecipeRegistry;
   browserEnabled?: boolean;
+  browserUsePolicies?: BrowserUsePolicyRegistry;
+  browserUseEnabled?: boolean;
+}
+const BOOKING_LABELS: Record<BookingKey, string> = {
+  site: "site", restaurant: "restaurant", date: "date (YYYY-MM-DD)", time: "time (HH:MM)", timezone: "timezone (e.g. Asia/Tokyo)",
+  partySize: "party size", reservationName: "name", contact: "email", budget: "budget",
+};
+/** Browser Use route: only when the request names an installed site policy with an explicit "site:" line. */
+function routeBrowserUseBooking(goal: string, context: GoalRoutingContext): Intent | null {
+  const policies = context.browserUsePolicies;
+  if (!policies?.list().length) return null;
+  const { request, missing, invalid } = parseBookingRequest(goal);
+  const policy = request.site ? policies.get(request.site) : null;
+  if (!policy) return null;
+  if (!context.browserUseEnabled) return clarify(`The local Browser Use worker is off on this HumanOS server, so ${policy.label} can't be opened. Nothing was booked.`);
+  if (missing.length || invalid.length) {
+    const parts = [
+      ...(missing.length ? [`add ${missing.map(key => `"${BOOKING_LABELS[key]}: …"`).join(", ")}`] : []),
+      ...(invalid.length ? [`correct ${invalid.map(key => BOOKING_LABELS[key]).join(", ")} (check the format and give it only once)`] : []),
+    ];
+    return clarify(`To book with ${policy.label}, edit your request and ${parts.join(", and ")}, one per line. Nothing was booked; you'll confirm the exact details before anything is submitted.`);
+  }
+  const plan = browserUseBookingPlan(request, policies);
+  if (plan.kind === "clarify") return clarify(plan.message);
+  const { preferred_time: _hint, ...fields } = plan.payload;
+  if (!policy.validateFields(fields).ok) return clarify(`These booking details are not accepted by ${policy.label}. Check the party size and email, then edit your request. Nothing was booked.`);
+  return { kind: "booking", blocks: ["human.confirm", "browser.submit"], destination: plan.destination, fields: plan.payload };
 }
 const clarify = (prompt: string): Intent => ({ kind: "clarify", blocks: ["human.input"], prompt });
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -48,6 +79,12 @@ function readFields(goal: string, recipe: BrowserRecipe): { fields: Record<strin
   return { fields, missing, invalid };
 }
 function routeBooking(goal: string, context: GoalRoutingContext): Intent {
+  const hotel = hotelIntake(goal);
+  // Hotel intake never borrows a restaurant policy or grants external capabilities.
+  if (hotel.isHotel) return clarify(hotel.missing.length ? hotel.question
+    : "Your hotel details are saved. No supported hotel booking service is installed, so HumanOS cannot check availability or book this stay yet. Nothing was booked or submitted.");
+  const browserUse = routeBrowserUseBooking(goal, context);
+  if (browserUse) return browserUse;
   const recipes = context.recipes?.list() ?? [];
   if (!recipes.length) return clarify("To prepare a table booking, provide the restaurant or area/cuisine, booking site, date, time with timezone, party size, budget, and reservation name. No audited booking site is installed yet; that site must be integrated before HumanOS can check availability or submit. Nothing was booked or submitted.");
   const lower = goal.toLowerCase();
@@ -98,7 +135,7 @@ export function workflowInputs(goal: string, context: GoalRoutingContext = {}): 
     browserFallbackAllowed: true, unsupportedExternalEffect: true,
     inputs: {
       "human.confirm": { value: {} },
-      "browser.submit": { value: { destination: `recipe:${intent.recipeId!}`, payload: { ...intent.fields! } } },
+      "browser.submit": { value: { destination: intent.destination ?? `recipe:${intent.recipeId!}`, payload: { ...intent.fields! } } },
     },
   };
   const content = { instruction: goal, context: intent.kind === "research" ? { sources: { $ref: "assembly_node_1.sources" } } : {}, outputSchema: intent.kind === "email" ? "email" : "text", maxCharacters: 8000 };

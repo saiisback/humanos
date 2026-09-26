@@ -8,3 +8,4 @@ export { JEV_MODEL, QUESTION_VERSION } from "./jev/questions.js";
 export { applyJevThresholds, JEV_THRESHOLDS } from "./jev/policy-map.js";
 export { ModelUnavailableError, type ModelConfig } from "./transport.js";
 export { QUESTION_VERSION as JEV_QUESTION_VERSION } from "./jev/questions.js";
+export { createBrowserActionSelector, type BrowserSelection, type BrowserSelectionInput } from "./jev/browser-selector.js";

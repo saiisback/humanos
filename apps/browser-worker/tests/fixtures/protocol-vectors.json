@@ -1,0 +1,39 @@
+{
+  "scope": {
+    "accountId": "11155111:0x1111111111111111111111111111111111111111",
+    "runId": "run-1",
+    "sessionId": "bus-0123456789abcdef"
+  },
+  "validCommands": [
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "start", "payload": { "policyId": "fixture-restaurant" } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 2, "observationRevision": 0, "command": "observe", "payload": {} },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 3, "observationRevision": 1, "command": "act", "payload": { "candidateId": "select:slot-1900" } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 4, "observationRevision": 2, "command": "prepare", "payload": { "fields": { "name": "Ada Lovelace", "party_size": "2" } } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 5, "observationRevision": 3, "command": "submit", "payload": { "permit": { "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 5, "observationRevision": 3, "payloadHash": "0x9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "expiresAt": "2026-09-26T12:05:00.000Z" } } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 6, "observationRevision": 4, "command": "inspect_receipt", "payload": {} },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 7, "observationRevision": 4, "command": "close", "payload": {} }
+  ],
+  "invalidCommands": [
+    { "why": "unknown command", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "run_agent", "payload": {} } },
+    { "why": "unknown envelope key", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "observe", "payload": {}, "extra": true } },
+    { "why": "arbitrary script field", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "act", "payload": { "candidateId": "select:slot-1900", "script": "document.forms[0].submit()" } } },
+    { "why": "arbitrary url", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "start", "payload": { "policyId": "fixture-restaurant", "url": "https://evil.example" } } },
+    { "why": "wrong protocol version", "value": { "protocolVersion": 2, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "observe", "payload": {} } },
+    { "why": "negative action id", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": -1, "observationRevision": 0, "command": "observe", "payload": {} } },
+    { "why": "fractional revision", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0.5, "command": "observe", "payload": {} } },
+    { "why": "field name outside grammar", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "prepare", "payload": { "fields": { "__proto__": "x" } } } },
+    { "why": "permit with extra key", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 5, "observationRevision": 3, "command": "submit", "payload": { "permit": { "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 5, "observationRevision": 3, "payloadHash": "0x9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "expiresAt": "2026-09-26T12:05:00.000Z", "bypass": true } } } },
+    { "why": "candidate id with markup", "value": { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "command": "act", "payload": { "candidateId": "select:<img onerror=x>" } } }
+  ],
+  "validResults": [
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 1, "observationRevision": 0, "status": "ready", "payload": { "runtime": { "name": "browser-use", "version": "0.13.10" }, "policyId": "fixture-restaurant", "origin": "http://fixture.humanos.test:8123", "profile": "dedicated" } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 2, "observationRevision": 1, "status": "observed", "payload": { "origin": "http://fixture.humanos.test:8123", "path": "/book", "title": "Book a table", "loginRequired": false, "facts": [{ "label": "slot", "text": "Friday 19:00" }], "candidates": [{ "id": "select:slot-1900", "kind": "select", "label": "19:00", "targetId": "slot-1900", "policyId": "fixture-restaurant", "observationRevision": 1 }] } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 4, "observationRevision": 3, "status": "prepared", "payload": { "destination": "http://fixture.humanos.test:8123/reserve", "fields": { "name": "Ada Lovelace", "party_size": "2" }, "material": ["Friday 19:00", "Deposit JPY 1000, refundable until 24h before"], "value": { "amount": "1000", "currency": "JPY" }, "materialHash": "0x9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 5, "observationRevision": 4, "status": "handoff", "payload": { "reason": "LOGIN_REQUIRED", "message": "Sign in to the site in the HumanOS browser window." } },
+    { "protocolVersion": 1, "accountId": "11155111:0x1111111111111111111111111111111111111111", "runId": "run-1", "sessionId": "bus-0123456789abcdef", "actionId": 7, "observationRevision": 4, "status": "closed", "payload": {} }
+  ],
+  "canonicalHash": {
+    "value": { "b": [1, "ü", null, true], "a": { "z": "line\nbreak", "y": "日本" } },
+    "sha256": "0x6de5796b900cfba526099fb05461478fe4b14a60c81993d2b676282ad341f68e"
+  }
+}

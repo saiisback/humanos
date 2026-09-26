@@ -1,6 +1,6 @@
 import { Database, WorkflowStore, WorkflowAgentStore, type SessionRecord } from "@humanos/database";
 import type { WorkflowEnsPort } from "@humanos/ens";
-import { createContentGenerator, createWorkflowSelector } from "@humanos/models";
+import { createBrowserActionSelector, createContentGenerator, createWorkflowSelector } from "@humanos/models";
 import { createDefaultCatalog } from "@humanos/workflows";
 import { hashCanonical, type Workflow, type WorkflowVersion, type WorkflowRun, type WorkflowNode } from "@humanos/schemas";
 import * as v from "valibot";
@@ -9,9 +9,12 @@ import { createWorkflowRunner, WorkflowPause, WorkflowExecutionError } from "./r
 import { createWorkflowConfirmations } from "./confirmations.js";
 import { ConnectorRegistry, createBraveSearchAdapter, createResendEmailAdapter, routeExternalStep, dispatchConnectorStep } from "./connectors.js";
 import { boundedIntentSelector, workflowInputs, classifyWorkflowGoal } from "./bindings.js";
-import { describeWorkflowConnections, connectorSetupFromEnv, describeBrowser } from "./connection-status.js";
+import { describeWorkflowConnections, connectorSetupFromEnv, describeBrowser, describeBrowserUse } from "./connection-status.js";
 import { createAuditedRecipeRegistry, createBrowserExecutor, createPlaywrightDriver } from "./browser.js";
 import { createBrowserStep } from "./browser-step.js";
+import { browserUseClientFactory, browserUseRuntimeConfig } from "./browser-use-client.js";
+import { createBrowserUsePolicyRegistry } from "./browser-use-policy.js";
+import { browserUseDestination, createBrowserUseStep } from "./browser-use-step.js";
 import type { StepExecutionContext, WorkflowExecutor } from "./types.js";
 import type { WorkflowApi } from "./routes.js";
 import { agentCapabilityFor, composeWorkflowAuthorizers, createWorkflowAgentAuthorizer, scheduleAuthorityCurrent } from "./agent-authorizer.js";
@@ -61,10 +64,15 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
     headless: env.HUMANOS_BROWSER_HEADLESS !== "false",
   }) }) : null;
   let browser: ReturnType<typeof createBrowserStep> | null = null;
+  // Opt-in local Browser Use worker; disabled unless explicitly selected and configured.
+  const browserUseClients = browserUseClientFactory(env), browserUseConfig = browserUseRuntimeConfig(env);
+  const browserUsePolicies = createBrowserUsePolicyRegistry();
+  let browserUse: ReturnType<typeof createBrowserUseStep> | null = null;
+  const isBrowserUse = (context: StepExecutionContext) => browserUseDestination.test(String(context.input.destination));
   const confirmations = createWorkflowConfirmations({ store,
     requiresConfirmation: type => registry.get(type).requiresConfirmation,
     prepare: async context => {
-      if (context.node.type === "browser.submit") return browser!.prepare(context);
+      if (context.node.type === "browser.submit") return isBrowserUse(context) ? browserUse!.prepare(context) : browser!.prepare(context);
       const route = await routeExternalStep(context, { registry: connectors, authorize });
       if (route.kind === "revoked") throw new WorkflowExecutionError("AUTHORIZATION");
       if (route.kind !== "connector") throw new WorkflowPause("CONNECTION_REQUIRED", route.kind === "connection_required" ? `Connect ${route.label} with ${route.scopes.join(", ")} before preparing this action.` : "Connect an approved service for this action.");
@@ -75,6 +83,10 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
     },
   });
   browser = createBrowserStep({ executor: browserExecutor, recipes, authorize, confirmations });
+  // Jev evaluates only finite, sanitized candidates; DeepSeek stays content-only.
+  browserUse = createBrowserUseStep({ client: browserUseClients, policies: browserUsePolicies, authorize, confirmations, store, visibleWindow: !browserUseConfig.headless,
+    selector: { select: input => createBrowserActionSelector(models).select(input) } });
+  const browserSubmit: WorkflowExecutor = { execute: context => (isBrowserUse(context) ? browserUse! : browser!).executor.execute(context) };
   const external: WorkflowExecutor = { async execute(context) {
     const route = await routeExternalStep(context, { registry: connectors, authorize });
     if (route.kind === "revoked") throw new WorkflowExecutionError("AUTHORIZATION");
@@ -97,20 +109,23 @@ export function createWorkflowRuntime(db: Database, env: NodeJS.ProcessEnv, opti
   } };
   const models = { apiKey: env.OPENCODE_API_KEY!.trim(), timeoutMs: 20000 };
   // One routing context for candidate filtering, assembly inputs and diagnostics.
-  const routing = { recipes, browserEnabled: driverEnabled };
+  const routing = { recipes, browserEnabled: driverEnabled, browserUsePolicies, browserUseEnabled: browserUseClients !== null };
   const service = createWorkflowService({ db, store, registry, selector: boundedIntentSelector(createWorkflowSelector(models), routing), assemblyInput: async goal => workflowInputs(goal, routing),
     describeGoal: goal => { const intent = classifyWorkflowGoal(goal, routing); return { intent: intent.kind, plannedSteps: [...intent.blocks], ...(intent.recipeId ? { recipeId: intent.recipeId } : {}) }; },
     capabilityForNode,
   });
   const runner = createWorkflowRunner({ store, registry, content: createContentGenerator(models), workerId: `local-${process.pid}`, authorize, dispatchConfirmed: confirmations.probeApproved,
-    executors: { "research.web": external, "connector.call": external, "application.submit": external, "calendar.create": external, "browser.submit": browser.executor, "human.confirm": { execute: confirmations.confirmNode } },
+    executors: { "research.web": external, "connector.call": external, "application.submit": external, "calendar.create": external, "browser.submit": browserSubmit, "human.confirm": { execute: confirmations.confirmNode } },
   });
   const scheduler = createWorkflowScheduler({ store, registry, authorityCurrent: (schedule, now) => scheduleAuthorityCurrent(db, schedule, now, ens) });
   const agents = createWorkflowAgentService({ db, store, agentStore, ens, capabilityForNode });
   const receipts = ens ? createWorkflowAgentReceipts({ db, agentStore, ens }) : null;
   const connections = (actor: { accountId: string }) => describeWorkflowConnections({
     accountId: actor.accountId, registry: connectors, setup: connectorSetupFromEnv(env), models: !!env.OPENCODE_API_KEY?.trim(),
-    browser: describeBrowser(driverEnabled, recipes.list().map(recipe => recipe.label)),
+    browser: browserUseConfig.enabled
+      ? describeBrowserUse({ enabled: true, configured: { python: !!browserUseConfig.python, profileRoot: !!browserUseConfig.profileRoot, chromium: !!browserUseConfig.chromium },
+          siteLabels: browserUsePolicies.list().filter(p => !p.fixtureOnly).map(p => p.label), workerVerified: false, authority: "account" })
+      : describeBrowser(driverEnabled, recipes.list().map(recipe => recipe.label)),
   });
   return { service, store, agents, confirmations, connections,
     ...(env.FLUE_URL && env.FLUE_INTERNAL_SECRET ? { flue: { url: env.FLUE_URL, secret: env.FLUE_INTERNAL_SECRET } } : {}),

@@ -23,6 +23,11 @@ export function ConfirmationPreview({ value }: { value: JsonValue }) {
     {typeof binding?.sender === "string" && <><dt>Sent as</dt><dd className="hash">{binding.sender}</dd></>}
     {args ? Object.entries(args).map(([key, entry]) => <React.Fragment key={key}><dt>{key}</dt><dd className="workflow-output">{typeof entry === "string" ? entry : JSON.stringify(entry)}</dd></React.Fragment>)
       : <><dt>Payload</dt><dd><OutputView value={payload} /></dd></>}
+    {args && Object.entries(payload).filter(([key]) => key !== (record(payload.arguments) ? "arguments" : "fields")).map(([key, entry]) =>
+      <React.Fragment key={`material:${key}`}>
+        <dt>{key === "material" ? "Booking details and terms" : key === "value" ? "Price / deposit" : key}</dt>
+        <dd className="workflow-output">{typeof entry === "string" ? entry : <pre>{JSON.stringify(entry, null, 2)}</pre>}</dd>
+      </React.Fragment>)}
   </dl>;
 }
 export function OutputView({ value }: { value: JsonValue }) {
